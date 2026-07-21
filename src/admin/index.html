@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mubasher Core — لوحة التحكم</title>
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<div class="admin-layout">
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <h2>Mubasher Core</h2>
+      <span class="sidebar-version">v1.0.0</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-item active" data-section="dashboard"><span class="nav-icon">📊</span><span class="nav-label">لوحة المراقبة</span></a>
+      <a href="#" class="nav-item" data-section="sources"><span class="nav-icon">📡</span><span class="nav-label">المصادر</span></a>
+      <a href="#" class="nav-item" data-section="channels"><span class="nav-icon">📺</span><span class="nav-label">القنوات</span></a>
+      <a href="#" class="nav-item" data-section="streams"><span class="nav-icon">🔴</span><span class="nav-label">البث المباشر</span></a>
+      <a href="#" class="nav-item" data-section="health"><span class="nav-icon">🩺</span><span class="nav-label">الفحص الصحي</span></a>
+      <a href="#" class="nav-item" data-section="config"><span class="nav-icon">⚙️</span><span class="nav-label">الإعدادات</span></a>
+      <a href="#" class="nav-item" data-section="logs"><span class="nav-icon">📋</span><span class="nav-label">السجلات</span></a>
+    </nav>
+    <div class="sidebar-footer">
+      <a href="/viewer" class="nav-item"><span class="nav-icon">👁</span><span class="nav-label">العودة للمشاهدة</span></a>
+    </div>
+  </aside>
+
+  <div class="main-area">
+    <header class="topbar">
+      <div class="topbar-title"><h1 id="pageTitle">لوحة المراقبة</h1></div>
+      <div class="topbar-info">
+        <span class="topbar-status" id="serverStatus">● متصل</span>
+        <span class="topbar-time" id="serverTime"></span>
+      </div>
+    </header>
+
+    <main class="content" id="mainContent">
+
+      <!-- Dashboard -->
+      <section id="section-dashboard" class="section active">
+        <div class="stats-grid">
+          <div class="stat-card"><div class="stat-icon">📺</div><div class="stat-value" id="statChannels">0</div><div class="stat-label">إجمالي القنوات</div></div>
+          <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-value" id="statEnabled">0</div><div class="stat-label">القنوات المفعلة</div></div>
+          <div class="stat-card"><div class="stat-icon">📡</div><div class="stat-value" id="statSources">0</div><div class="stat-label">المصادر</div></div>
+          <div class="stat-card"><div class="stat-icon">🔴</div><div class="stat-value" id="statStreams">0</div><div class="stat-label">البث النشط</div></div>
+          <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-value" id="statViewers">0</div><div class="stat-label">المشاهدون</div></div>
+          <div class="stat-card"><div class="stat-icon">⏱</div><div class="stat-value" id="statUptime">0s</div><div class="stat-label">مدة التشغيل</div></div>
+        </div>
+      </section>
+
+      <!-- Sources -->
+      <section id="section-sources" class="section">
+        <div class="section-header">
+          <h2>إدارة المصادر</h2>
+          <div class="section-actions">
+            <button class="btn btn-primary" id="addSourceBtn">+ إضافة مصدر</button>
+          <button class="btn btn-accent" id="importM3UBtn">📥 استيراد رابط M3U</button>
+          <button class="btn btn-accent" id="importLocalFileBtn">📂 رفع ملف M3U</button>
+          <input type="file" id="fileInput" accept=".m3u,.m3u8,text/plain" style="display:none">
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>الاسم</th><th>النوع</th><th>الرابط</th><th>الحالة</th><th>القنوات</th><th>آخر تحديث</th><th>الإجراءات</th></tr></thead>
+            <tbody id="sourcesTableBody"><tr><td colspan="7" class="empty-row">لا توجد مصادر</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Channels -->
+      <section id="section-channels" class="section">
+        <div class="section-header">
+          <h2>إدارة القنوات</h2>
+          <div class="section-actions">
+            <input type="text" id="channelSearch" class="input search-input" placeholder="🔍 بحث في القنوات..." style="max-width:300px">
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>القناة</th><th>المجموعة</th><th>الرابط</th><th>الحالة</th><th>المشاهدون</th><th>الصحة</th><th>الإجراءات</th></tr></thead>
+            <tbody id="channelsTableBody"><tr><td colspan="7" class="empty-row">لا توجد قنوات</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Streams -->
+      <section id="section-streams" class="section">
+        <div class="section-header"><h2>البث المباشر</h2><p class="section-desc">حالة عمليات FFmpeg النشطة</p></div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>القناة</th><th>الحالة</th><th>المشاهدون</th><th>مدة التشغيل</th><th>إجراء</th></tr></thead>
+            <tbody id="streamsTableBody"><tr><td colspan="5" class="empty-row">لا توجد بث نشط</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Health -->
+      <section id="section-health" class="section">
+        <div class="section-header"><h2>الفحص الصحي</h2><p class="section-desc">اختبار روابط البث باستخدام ffprobe</p></div>
+        <div class="health-form">
+          <input type="text" id="healthUrl" class="input" placeholder="أدخل رابط البث لاختباره..." dir="ltr">
+          <button class="btn btn-primary" id="healthTestBtn">اختبار</button>
+        </div>
+        <div id="healthResult" class="health-result hidden"></div>
+      </section>
+
+      <!-- Config -->
+      <section id="section-config" class="section">
+        <div class="section-header"><h2>الإعدادات</h2><p class="section-desc">إعدادات النظام الحالية</p></div>
+        <pre id="configDisplay" class="config-json"></pre>
+      </section>
+
+      <!-- Logs -->
+      <section id="section-logs" class="section">
+        <div class="section-header">
+          <h2>السجلات</h2>
+          <div class="section-actions">
+            <button class="btn btn-sm" id="refreshLogsBtn">🔄 تحديث</button>
+            <button class="btn btn-sm btn-danger" id="clearLogsBtn">🗑 مسح</button>
+          </div>
+        </div>
+        <div class="log-body" id="logBody"><div class="log-empty">لا توجد سجلات</div></div>
+      </section>
+
+    </main>
+    <footer class="admin-footer"><span>Mubasher Core v1.0.0</span></footer>
+  </div>
+</div>
+
+<!-- Add Source Modal -->
+<div class="modal-overlay hidden" id="sourceModal">
+  <div class="modal">
+    <div class="modal-header"><h3>إضافة مصدر جديد</h3><button class="modal-close" id="sourceModalClose">✕</button></div>
+    <form id="sourceForm">
+      <div class="form-group"><label>اسم المصدر</label><input type="text" id="sourceName" class="input" required placeholder="مثال: قنوات عربية"></div>
+      <div class="form-group"><label>نوع المصدر</label>
+        <select id="sourceType" class="input">
+          <option value="m3u_url">رابط M3U</option>
+          <option value="m3u_file">ملف M3U</option>
+          <option value="single">قناة منفردة</option>
+        </select>
+      </div>
+      <div class="form-group"><label>الرابط أو المسار</label><input type="text" id="sourceUrl" class="input" required placeholder="https://example.com/playlist.m3u8" dir="ltr"></div>
+      <div class="form-actions"><button type="submit" class="btn btn-primary">إضافة</button><button type="button" class="btn" onclick="document.getElementById('sourceModal').classList.add('hidden')">إلغاء</button></div>
+    </form>
+  </div>
+</div>
+
+      <!-- Add / Edit Channel Modal -->
+<div class="modal-overlay hidden" id="channelModal">
+  <div class="modal">
+    <div class="modal-header"><h3 id="channelModalTitle">إضافة قناة جديدة</h3><button class="modal-close" id="channelModalClose">✕</button></div>
+    <form id="channelForm">
+      <div class="form-group"><label>اسم القناة</label><input type="text" id="channelName" class="input" required placeholder="مثال: قناة العربية"></div>
+      <div class="form-group"><label>المجموعة</label><input type="text" id="channelGroup" class="input" placeholder="مثال: أخبار"></div>
+      <div class="form-group"><label>رابط البث</label><input type="url" id="channelUrl" class="input" required placeholder="https://example.com/stream.m3u8" dir="ltr"></div>
+      <div class="form-group"><label>الرابط البديل (Backup URL)</label><input type="url" id="channelBackupUrl" class="input" placeholder="https://backup.example.com/stream.m3u8" dir="ltr"></div>
+      <div class="form-group"><label>رابط الشعار (Logo)</label><input type="url" id="channelLogo" class="input" placeholder="https://example.com/logo.png" dir="ltr"></div>
+      <div class="form-group"><label>معرف القناة (tvg-id)</label><input type="text" id="channelTvgId" class="input" placeholder="اختياري"></div>
+      <div class="form-group" style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" id="channelEnabled" checked>
+        <label for="channelEnabled">مفعلة</label>
+      </div>
+      <input type="hidden" id="channelEditId" value="">
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary" id="channelSubmitBtn">إضافة قناة</button>
+        <button type="button" class="btn" onclick="closeChannelModal()">إلغاء</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Import M3U Modal -->
+<div class="modal-overlay hidden" id="importModal">
+  <div class="modal">
+    <div class="modal-header"><h3>استيراد قائمة M3U</h3><button class="modal-close" id="importModalClose">✕</button></div>
+    <form id="importForm">
+      <div class="form-group"><label>اسم المصدر (اختياري)</label><input type="text" id="importName" class="input" placeholder="مثال: قنوات رياضية"></div>
+      <div class="form-group"><label>نوع الاستيراد</label>
+        <select id="importType" class="input">
+          <option value="m3u_url">رابط M3U</option>
+          <option value="m3u_file">ملف M3U محلي</option>
+        </select>
+      </div>
+      <div class="form-group"><label>رابط القائمة</label><input type="text" id="importUrl" class="input" required placeholder="https://example.com/playlist.m3u8" dir="ltr"></div>
+      <div class="form-actions"><button type="submit" class="btn btn-primary" id="importSubmitBtn">استيراد</button><button type="button" class="btn" onclick="document.getElementById('importModal').classList.add('hidden')">إلغاء</button></div>
+    </form>
+  </div>
+</div>
+
+<script src="admin.js"></script>
+</body>
+</html>

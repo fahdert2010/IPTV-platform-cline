@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Mubasher Core — البث المباشر</title>
+<link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+
+<div class="ticker-bar hidden" id="tickerBar">
+  <span class="ticker-label">أخبار</span>
+  <div class="ticker-track"><span id="tickerText"></span></div>
+</div>
+
+<header class="site-head">
+  <img id="siteLogo" class="site-logo hidden" alt="">
+  <h1 id="siteTitle">Mubasher Core</h1>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="channels">القنوات</button>
+  </nav>
+</header>
+
+<!-- Player -->
+<section id="playerSection" class="player-section hidden">
+  <div class="player-shell">
+    <video id="video" playsinline></video>
+    <div class="player-loading" id="playerLoading">
+      <div class="pl-spinner"></div>
+      <div class="pl-text">جاري تجهيز البث...</div>
+    </div>
+    <div class="player-error hidden" id="playerError">
+      <div class="pe-icon">⚠️</div>
+      <div class="pe-title" id="peTitle">تعذر تشغيل البث</div>
+      <div class="pe-sub" id="peSub">قد يكون المصدر غير متاح حالياً</div>
+      <button class="pe-btn" id="peRetryBtn">إعادة المحاولة</button>
+    </div>
+    <div class="player-bar">
+      <div class="np">
+        <span class="np-live">● مباشر</span>
+        <span class="np-name" id="npName"></span>
+        <span class="np-quality hidden" id="npQuality"></span>
+        <span class="np-viewers hidden" id="npViewers"></span>
+      </div>
+      <div class="player-controls">
+        <label class="cpu-saver" title="يقلل استهلاك المعالج">
+          <input type="checkbox" id="cpuSaver"> توفير المعالج
+        </label>
+        <button class="pbtn" id="copyUrlBtn" title="نسخ الرابط">📋</button>
+        <button class="pbtn" id="vlcBtn" title="فتح في VLC">▶</button>
+        <button class="pbtn" id="refreshBtn" title="تحديث">↻</button>
+        <button class="pbtn" id="muteBtn">🔊</button>
+        <button class="pbtn" id="pipBtn" title="صورة داخل صورة">📌</button>
+        <button class="pbtn" id="fsBtn" title="ملء الشاشة">⛶</button>
+        <button class="pbtn pbtn-close" id="closePlayer">✕</button>
+      </div>
+    </div>
+    <div class="player-msg hidden" id="playerMsg"></div>
+  </div>
+</section>
+
+<!-- Reconnect Layer -->
+<div class="reconnect-layer hidden" id="reconnectLayer">
+  <div class="reconnect-spinner"></div>
+  <div class="reconnect-text">جاري إعادة الاتصال...</div>
+</div>
+
+<!-- Channels -->
+<main id="tab-channels" class="container">
+  <div class="search-bar">
+    <input type="text" class="search-input" id="searchInput" placeholder="🔍 بحث في القنوات...">
+  </div>
+  <div class="cat-filters" id="catFilters"></div>
+  <div class="grid" id="channelGrid"></div>
+  <p id="emptyMsg" class="empty hidden">لا توجد قنوات متاحة حالياً.</p>
+</main>
+
+<footer class="site-foot">
+  <span>جميع الحقوق محفوظة © <a href="/admin">Mubasher Core</a></span>
+</footer>
+
+<script src="viewer.js"></script>
+</body>
+</html>

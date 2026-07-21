@@ -1,0 +1,9 @@
+node_modules/
+hls/
+data/
+logs/
+config/user.json
+*.log
+.env
+.DS_Store
+Thumbs.db
