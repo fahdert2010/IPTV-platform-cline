@@ -19,7 +19,6 @@ router.use((req, res, next) => {
   const cfg = config.get();
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Basic ')) {
-    res.setHeader('WWW-Authenticate', 'Basic realm="Mubasher Core"');
     return res.status(401).json({ error: 'Authentication required' });
   }
   const decoded = Buffer.from(auth.slice(6), 'base64').toString();
@@ -444,7 +443,7 @@ router.post('/sources/import-file', fileUpload.single('file'), async (req, res) 
     const name = req.body.name || req.file.originalname.replace(/\.(m3u|m3u8)$/i, '') || 'Local Import';
     const filePath = req.file.path;
     
-    const src = sources.add({ name, type: 'm3u_file', url: filePath });
+    const src = sources.add({ name, type: 'm3u_file', baseUrl: filePath });
     const result = await sources.importChannels(sources.getById(src.id));
     
     res.json({ source: src, ...result });
@@ -454,6 +453,30 @@ router.post('/sources/import-file', fileUpload.single('file'), async (req, res) 
       try { require('fs').unlinkSync(req.file.path); } catch (_) {}
     }
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── M3U Upload Endpoint (multipart) ──────────────────────────
+router.post('/sources/upload', fileUpload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  
+  try {
+    const name = req.body.name || req.file.originalname.replace(/\.(m3u|m3u8)$/i, '') || 'M3U Upload';
+    const filePath = req.file.path;
+    
+    const src = sources.add({ name, type: 'm3u_file', baseUrl: filePath });
+    const result = await sources.importChannels(sources.getById(src.id));
+    
+    // Log import summary
+    logger.info(`Admin: M3U upload "${name}" — added ${result.added || 0}, updated ${result.updated || 0}`);
+    
+    res.json({ success: true, source: { id: src.id, name: src.name }, ...result });
+  } catch (err) {
+    logger.error('M3U upload failed', { error: err.message });
+    if (req.file && req.file.path) {
+      try { require('fs').unlinkSync(req.file.path); } catch (_) {}
+    }
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

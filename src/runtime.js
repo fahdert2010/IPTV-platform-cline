@@ -233,6 +233,9 @@ class RuntimeRegistry {
         if (!ch.name.toLowerCase().includes(q) && !ch.group.toLowerCase().includes(q)) continue;
       }
       if (filter.state && ch.state !== filter.state) continue;
+      // Source binding filters (used by SourceRepository.importChannels)
+      if (filter.primarySource !== undefined && ch.primarySource !== filter.primarySource) continue;
+      if (filter.primaryStreamId !== undefined && ch.primaryStreamId !== filter.primaryStreamId) continue;
       
       result.push({ ...ch });
     }
