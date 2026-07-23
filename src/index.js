@@ -2,6 +2,7 @@
 
 const config = require('./config');
 const logger = require('./logger');
+const runtime = require('./runtime');
 const { createApp } = require('./api');
 const streamEngine = require('./stream-engine');
 const viewerManager = require('./viewer-manager');

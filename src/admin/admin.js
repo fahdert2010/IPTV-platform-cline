@@ -1,1048 +1,703 @@
-'use strict';
+/* ═══════════════════════════════════════════════
+   Mubasher Core v2.0 — Operations Center
+   ═══════════════════════════════════════════════ */
+let AUTH = '';
+let INTERVAL = null;
+let SSE = null;
+let CHANNELS = [], SOURCES = [], STREAMS = [], VIEWERS = [], HEALTH = [];
+let LOGS_CACHE = [];
 
-/* Mubasher Core v2.0 — Admin Panel
- * All credentials are read from the server config - NOT hardcoded.
- * All data flows from RuntimeRegistry via /api/admin endpoints.
- */
+// ═══ AUTH ═══
+document.getElementById('login-form').onsubmit = async e => {
+  e.preventDefault();
+  const u = document.getElementById('login-user').value;
+  const p = document.getElementById('login-pass').value;
+  AUTH = 'Basic ' + btoa(u + ':' + p);
+  const ok = await api('/admin/dashboard');
+  if (!ok) { document.getElementById('login-error').textContent = 'خطأ في تسجيل الدخول'; return; }
+  document.getElementById('login-overlay').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  init();
+};
 
-// ─── Credentials from server (fetched at init) ────────────
-let _authHeader = null;
-
-async function loadCredentials() {
-  // Fetch credentials from server config endpoint
-  // The server returns the configured username (NOT password) for display
-  // Auth is done via Basic Auth - password must be entered by user
-  const stored = sessionStorage.getItem('mubasher_auth');
-  if (stored) {
-    _authHeader = stored;
-    const ok = await verifyAuth();
-    if (ok) return true;
-    sessionStorage.removeItem('mubasher_auth');
-  }
-  return promptLogin();
-}
-
-async function verifyAuth() {
+async function api(path, opts = {}) {
   try {
-    const res = await fetch('/api/admin/channels', {
-      headers: { 'Authorization': _authHeader, 'Content-Type': 'application/json' }
+    // Fix: backend routes are mounted under /api prefix
+    // (router.use('/admin', adminRouter) then app.use('/api', router))
+    // But frontend calls paths like /admin/streams without /api
+    const url = path.startsWith('/api/') ? path : '/api' + path;
+    const res = await fetch(url, {
+      headers: { 'Authorization': AUTH, 'Content-Type': 'application/json', ...opts.headers },
+      method: opts.method || 'GET',
+      body: opts.body ? JSON.stringify(opts.body) : undefined
     });
-    return res.ok;
-  } catch (_) {
-    return false;
-  }
+    if (res.status === 401) { document.getElementById('login-overlay').style.display = 'flex'; return null; }
+    return res.status === 204 ? true : await res.json();
+  } catch { return null; }
 }
 
-function promptLogin() {
-  return new Promise((resolve) => {
-    const overlay = document.getElementById('login-overlay');
-    if (!overlay) return resolve(false);
-    overlay.classList.add('show');
-
-    document.getElementById('login-form').onsubmit = async (e) => {
-      e.preventDefault();
-      const user = document.getElementById('login-user').value.trim();
-      const pass = document.getElementById('login-pass').value;
-      if (!user || !pass) return;
-      _authHeader = 'Basic ' + btoa(user + ':' + pass);
-      const ok = await verifyAuth();
-      if (ok) {
-        sessionStorage.setItem('mubasher_auth', _authHeader);
-        overlay.classList.remove('show');
-        resolve(true);
-      } else {
-        document.getElementById('login-error').textContent = 'بيانات الدخول غير صحيحة';
-      }
-    };
-  });
-}
-
-// ─── API helper ──────────────────────────────────────────
-async function api(method, path, body) {
-  const opts = {
-    method,
-    headers: { 'Authorization': _authHeader, 'Content-Type': 'application/json' }
+// ═══ NAV ═══
+document.querySelectorAll('#sidebar nav a').forEach(a => {
+  a.onclick = () => {
+    document.querySelectorAll('#sidebar nav a').forEach(x => x.classList.remove('active'));
+    a.classList.add('active');
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    const page = document.getElementById('page-' + a.dataset.page);
+    if (page) page.classList.add('active');
+    document.getElementById('page-title').textContent = a.querySelector('span:nth-child(2)').textContent;
+    loadPage(a.dataset.page);
   };
-  if (body) opts.body = JSON.stringify(body);
-  try {
-    const res = await fetch('/api/admin' + path, opts);
-    if (res.status === 401 || res.status === 403) {
-      sessionStorage.removeItem('mubasher_auth');
-      location.reload();
-      return null;
-    }
-    return await res.json();
-  } catch (err) {
-    console.error('API Error:', err);
-    return null;
-  }
-}
+});
 
-// ─── Utilities ───────────────────────────────────────────
-function esc(s) {
-  if (s == null) return '';
-  return String(s)
-    .replace(/&/g, '&')
-    .replace(/</g, '<')
-    .replace(/>/g, '>')
-    .replace(/"/g, '"');
-}
-
-function formatTime(seconds) {
-  if (!seconds || seconds < 0) return '0s';
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  if (h > 0) return h + 'h ' + m + 'm';
-  if (m > 0) return m + 'm ' + s + 's';
-  return s + 's';
-}
-
-function formatBytes(bytes) {
-  if (!bytes || bytes === 0) return '0B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
-
-function stateClass(state) {
-  const map = {
-    'ONLINE': 'status-on',
-    'STARTING': 'status-warn',
-    'PROBING': 'status-warn',
-    'BUFFERING': 'status-warn',
-    'RECONNECTING': 'status-warn',
-    'IDLE': 'status-off',
-    'STOPPED': 'status-off',
-    'ERROR': 'status-err',
-    'STOPPING': 'status-warn'
+function loadPage(name) {
+  const fns = {
+    overview: loadOverview, channels: loadChannels, sources: loadSources,
+    streams: loadStreams, ffmpeg: loadFFmpeg, viewers: loadViewers,
+    hls: loadHls, health: loadHealth, diagnostics: loadDiagnostics,
+    logs: loadLogs, settings: loadSettings
   };
-  return map[state] || 'status-off';
+  if (fns[name]) fns[name]();
 }
 
-function stateLabel(state) {
-  const map = {
-    'ONLINE': '🟢 مباشر',
-    'STARTING': '🟡 بدء',
-    'PROBING': '🔵 فحص',
-    'BUFFERING': '🟣 تخزين',
-    'RECONNECTING': '🟠 إعادة اتصال',
-    'IDLE': '⚪ خامل',
-    'STOPPED': '🔴 متوقف',
-    'ERROR': '❌ خطأ',
-    'STOPPING': '🟡 إيقاف'
-  };
-  return map[state] || (state || '-');
-}
-
-// ─── Navigation ──────────────────────────────────────────
-function initNav() {
-  document.querySelectorAll('nav a[data-page]').forEach(item => {
-    item.addEventListener('click', function(e) {
-      e.preventDefault();
-      const page = this.dataset.page;
-      if (!page) return;
-      document.querySelectorAll('nav a').forEach(n => n.classList.remove('active'));
-      this.classList.add('active');
-      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-      const target = document.getElementById('page-' + page);
-      if (target) target.classList.add('active');
-      const titleEl = document.getElementById('page-title');
-      if (titleEl) titleEl.textContent = this.querySelector('span:not(.icon)')?.textContent?.trim() || this.textContent.trim();
-      loadPage(page);
-    });
-  });
-}
-
-function loadPage(page) {
-  switch (page) {
-    case 'dashboard': loadDashboard(); break;
-    case 'channels': loadChannels(); break;
-    case 'sources': loadSources(); break;
-    case 'viewers': loadViewers(); break;
-    case 'streams': loadStreams(); break;
-    case 'cache': loadCache(); break;
-    case 'health': loadHealth(); break;
-    case 'settings': loadSettings(); break;
-    case 'logs': loadLogs(); break;
-  }
-}
-
-// ─── SSE: Real-time updates via Server-Sent Events ───────
-let _sseConnection = null;
-
-function startSSE() {
-  if (_sseConnection) {
-    _sseConnection.close();
-    _sseConnection = null;
-  }
-
-  _sseConnection = new EventSource('/api/admin/events', {
-    // EventSource doesn't support custom headers - use URL param
-  });
-
-  // Since EventSource doesn't support Basic Auth headers directly,
-  // use polling as fallback for dashboard
-  _sseConnection.onmessage = (e) => {
+// ═══ INIT ═══
+function init() {
+  loadOverview();
+  // SSE for real-time updates
+  if (SSE) SSE.close();
+  SSE = new EventSource('/api/admin/events');
+  SSE.onmessage = e => {
     try {
-      const { type, data } = JSON.parse(e.data);
-      if (type === 'update') applyDashboardData(data);
-    } catch (_) {}
+      const d = JSON.parse(e.data);
+      if (d.type === 'update') updateDashboard(d.data);
+    } catch {}
   };
-
-  _sseConnection.onerror = () => {
-    // Reconnect after 5s
-    setTimeout(startSSE, 5000);
-  };
+  // Clock
+  setInterval(() => {
+    document.getElementById('header-time').textContent = new Date().toLocaleTimeString('ar-SA');
+  }, 1000);
 }
 
-// ─── Dashboard ───────────────────────────────────────────
-let _dashboardTimer = null;
-
-async function loadDashboard() {
-  const d = await api('GET', '/dashboard');
-  if (d) applyDashboardData(d);
+// ═══ OVERVIEW ═══
+async function loadOverview() {
+  const d = await api('/admin/dashboard');
+  if (!d) return;
+  renderOverview(d);
 }
 
-function applyDashboardData(d) {
-  const ch = d.channels || {};
-  const viewers = d.viewers || {};
-  const health = d.health || {};
-  const cache = d.cache || {};
-  const system = d.system || {};
+function renderOverview(d) {
+  const { channels, viewers, health, cache, sources, streams, system } = d;
+  document.getElementById('header-viewers').textContent = (viewers?.current || 0) + ' مشاهد';
+  document.getElementById('uptime-display').textContent = formatUptime(system?.uptimeSeconds || 0);
+  document.getElementById('status-dot').className = 'dot online';
 
-  // Stats grid
-  const statsEl = document.getElementById('dashboard-stats');
-  if (statsEl) {
-    statsEl.innerHTML = `
-      <div class="stat-card">
-        <div class="stat-value">${ch.total || 0}</div>
-        <div class="stat-label">إجمالي القنوات</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value text-green">${ch.running || 0}</div>
-        <div class="stat-label">قيد البث</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">${viewers.current || 0}</div>
-        <div class="stat-label">المشاهدون</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">${health.averageScore !== undefined ? health.averageScore + '%' : '—'}</div>
-        <div class="stat-label">معدل الصحة</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">${formatTime(system.uptimeSeconds || 0)}</div>
-        <div class="stat-label">وقت التشغيل</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value">${system.memoryRssMb || 0} MB</div>
-        <div class="stat-label">الذاكرة</div>
-      </div>
-    `;
-  }
+  // Stats row
+  document.getElementById('overview-stats').innerHTML = `
+    <div class="stat"><div class="val">${channels?.total||0}</div><div class="lbl">إجمالي القنوات</div></div>
+    <div class="stat"><div class="val green">${channels?.running||0}</div><div class="lbl">بث نشط</div></div>
+    <div class="stat"><div class="val yellow">${channels?.starting||0}</div><div class="lbl">قيد التشغيل</div></div>
+    <div class="stat"><div class="val red">${channels?.error||0}</div><div class="lbl">أخطاء</div></div>
+    <div class="stat"><div class="val">${viewers?.current||0}</div><div class="lbl">المشاهدون</div></div>
+    <div class="stat"><div class="val purple">${(streams||[]).length}</div><div class="lbl">عمليات FFmpeg</div></div>
+  `;
 
   // Streams status
-  const streamsEl = document.getElementById('streams-status');
-  if (streamsEl) {
-    streamsEl.innerHTML = `
-      <div class="mini-stat"><span>مباشر:</span><strong class="text-green">${ch.running || 0}</strong></div>
-      <div class="mini-stat"><span>بدء:</span><strong class="text-yellow">${ch.starting || 0}</strong></div>
-      <div class="mini-stat"><span>خطأ:</span><strong class="text-red">${ch.error || 0}</strong></div>
-      <div class="mini-stat"><span>خامل:</span><strong>${ch.idle || 0}</strong></div>
-      <div class="mini-stat"><span>إعادة اتصال:</span><strong class="text-yellow">${ch.reconnecting || 0}</strong></div>
-    `;
-  }
+  let sHtml = '<div class="info-row"><span class="k">ONLINE</span><span class="v green">' + (channels?.running||0) + '</span></div>';
+  sHtml += '<div class="info-row"><span class="k">ERROR</span><span class="v red">' + (channels?.error||0) + '</span></div>';
+  sHtml += '<div class="info-row"><span class="k">قيد التشغيل</span><span class="v yellow">' + (channels?.starting||0) + '</span></div>';
+  sHtml += '<div class="info-row"><span class="k">متوقف</span><span class="v">' + (channels?.idle||0) + '</span></div>';
+  document.getElementById('ov-streams').innerHTML = sHtml;
 
-  // Health status
-  const healthEl = document.getElementById('health-status');
-  if (healthEl) {
-    healthEl.innerHTML = `
-      <div class="mini-stat"><span>سليم:</span><strong class="text-green">${health.healthy || 0}</strong></div>
-      <div class="mini-stat"><span>تحذير:</span><strong class="text-yellow">${health.warning || 0}</strong></div>
-      <div class="mini-stat"><span>خطير:</span><strong class="text-red">${health.critical || 0}</strong></div>
-      <div class="mini-stat"><span>غير متصل:</span><strong class="text-gray">${health.offline || 0}</strong></div>
-    `;
-  }
+  // Health
+  const h = health || {};
+  document.getElementById('ov-health').innerHTML = `
+    <div class="info-row"><span class="k">متوسط الدرجة</span><span class="v">${h.averageScore||0}%</span></div>
+    <div class="info-row"><span class="k">سليم</span><span class="v green">${h.healthy||0}</span></div>
+    <div class="info-row"><span class="k">تحذير</span><span class="v yellow">${h.warning||0}</span></div>
+    <div class="info-row"><span class="k">خطير</span><span class="v red">${h.critical||0}</span></div>
+    <div class="info-row"><span class="k">غير متصل</span><span class="v">${h.offline||0}</span></div>
+  `;
 
-  // Viewers status
-  const viewersEl = document.getElementById('viewers-status');
-  if (viewersEl) {
-    viewersEl.innerHTML = `
-      <div class="mini-stat"><span>متصل:</span><strong>${viewers.current || 0}</strong></div>
-      <div class="mini-stat"><span>الإجمالي:</span><strong>${viewers.total || 0}</strong></div>
-    `;
-  }
+  // Viewers
+  document.getElementById('ov-viewers').innerHTML = `
+    <div class="info-row"><span class="k">حاليًا</span><span class="v">${viewers?.current||0}</span></div>
+    <div class="info-row"><span class="k">الإجمالي</span><span class="v">${viewers?.total||0}</span></div>
+  `;
 
-  // Cache status
-  const cacheEl = document.getElementById('cache-status');
-  if (cacheEl) {
-    cacheEl.innerHTML = `
-      <div class="mini-stat"><span>RAM:</span><strong>${formatBytes(cache.ramUsedBytes || 0)}</strong></div>
-      <div class="mini-stat"><span>قرص:</span><strong>${formatBytes(cache.diskUsedBytes || 0)}</strong></div>
-      <div class="mini-stat"><span>نسبة الإصابة:</span><strong>${cache.hitRate !== undefined ? cache.hitRate + '%' : '—'}</strong></div>
-    `;
-  }
+  // Sources
+  document.getElementById('ov-sources').innerHTML = `
+    <div class="info-row"><span class="k">الإجمالي</span><span class="v">${sources?.total||0}</span></div>
+    <div class="info-row"><span class="k">مفعل</span><span class="v green">${sources?.enabled||0}</span></div>
+  `;
 
-  // Live logs
-  const logsEl = document.getElementById('live-logs');
-  if (logsEl && d.logs && d.logs.length > 0) {
-    logsEl.innerHTML = d.logs.slice(0, 20).map(log =>
-      `<div class="log-entry log-${log.level || 'info'}">
-        <span class="log-time">[${new Date(log.timestamp).toLocaleTimeString('ar-SA')}]</span>
-        <span class="log-level">${(log.level || 'INFO').toUpperCase()}</span>
-        <span>${esc(log.message || '')}</span>
-      </div>`
-    ).join('');
-  }
+  // Cache
+  const c = cache || {};
+  document.getElementById('ov-cache').innerHTML = `
+    <div class="info-row"><span class="k">مقاطع</span><span class="v">${c.segmentCount||0}</span></div>
+    <div class="info-row"><span class="k">نسبة الإصابة</span><span class="v">${c.hitRate||0}%</span></div>
+    <div class="info-row"><span class="k">RAM</span><span class="v">${fmtBytes(c.ramUsedBytes||0)}</span></div>
+    <div class="info-row"><span class="k">القرص</span><span class="v">${fmtBytes(c.diskUsedBytes||0)}</span></div>
+  `;
 
-  // Header stats
-  const uptimeEl = document.getElementById('uptime-display');
-  if (uptimeEl) uptimeEl.textContent = formatTime(system.uptimeSeconds || 0);
-  const viewerCountEl = document.getElementById('viewer-count');
-  if (viewerCountEl) viewerCountEl.textContent = (viewers.current || 0) + ' مشاهد';
+  // Badges
+  if (channels?.error > 0) showBadge('overview', channels.error);
+  else hideBadge('overview');
+  if (viewers?.current > 0) showBadge('viewers', viewers.current);
+  else hideBadge('viewers');
+  if (channels?.error > 0) showBadge('health', channels.error);
+  else hideBadge('health');
 
-  // Sources info
-  const sourcesEl = document.getElementById('sources-status');
-  if (sourcesEl && d.sources) {
-    sourcesEl.innerHTML = `
-      <div class="mini-stat"><span>إجمالي:</span><strong>${d.sources.total || 0}</strong></div>
-      <div class="mini-stat"><span>مفعل:</span><strong>${d.sources.enabled || 0}</strong></div>
-    `;
-  }
+  // System info
+  document.getElementById('sys-cpu').textContent = 'CPU —%';
+  document.getElementById('sys-ram').textContent = 'RAM ' + fmtBytes(system?.memoryRssMb*1024*1024 || 0);
 }
 
-// Auto-refresh dashboard every 3s if SSE not working
-function startDashboardAutoRefresh() {
-  if (_dashboardTimer) clearInterval(_dashboardTimer);
-  _dashboardTimer = setInterval(() => {
-    const dashPage = document.getElementById('page-dashboard');
-    if (dashPage && dashPage.classList.contains('active')) {
-      loadDashboard();
-    }
-  }, 3000);
+function updateDashboard(d) {
+  if (document.getElementById('page-overview').classList.contains('active')) renderOverview(d);
 }
 
-// ─── Channels ────────────────────────────────────────────
-let channelsData = [];
-
+// ═══ CHANNELS ═══
 async function loadChannels() {
-  const d = await api('GET', '/channels');
-  channelsData = d?.channels || [];
+  const data = await api('/admin/channels');
+  if (!data) return;
+  CHANNELS = data.channels || [];
   renderChannels();
 }
 
 function renderChannels() {
-  const tbody = document.getElementById('channels-body');
-  if (!tbody) return;
-
-  const search = (document.getElementById('channel-search')?.value || '').toLowerCase();
-  let filtered = channelsData;
-  if (search) {
-    filtered = filtered.filter(c =>
-      (c.name || '').toLowerCase().includes(search) ||
-      (c.group || '').toLowerCase().includes(search) ||
-      (c.country || '').toLowerCase().includes(search)
-    );
-  }
-
-  if (!filtered.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty-row">لا توجد قنوات. أضف مصدراً أولاً وقم باستيراد القنوات.</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = filtered.map(ch => `
+  const search = (document.getElementById('ch-search')?.value || '').toLowerCase();
+  const stateFilter = document.getElementById('ch-filter-state')?.value || '';
+  let list = CHANNELS;
+  if (search) list = list.filter(c => (c.name||'').toLowerCase().includes(search) || (c.group||'').toLowerCase().includes(search));
+  if (stateFilter) list = list.filter(c => c.state === stateFilter);
+  
+  document.getElementById('ch-tbody').innerHTML = list.map(c => `
     <tr>
-      <td><input type="checkbox" class="channel-check" value="${ch.id}"></td>
-      <td>${ch.number || ''}</td>
+      <td><input type="checkbox" class="ch-cb" value="${c.id}"></td>
+      <td>${c.number||''}</td>
+      <td><strong>${esc(c.name)||'(بدون اسم)'}</strong></td>
+      <td>${esc(c.group)}</td>
+      <td><span class="badge-state ${(c.state||'STOPPED').toLowerCase()}">${c.state||'STOPPED'}</span></td>
+      <td>${c.viewerCount||0}</td>
+      <td>${c.healthScore != null ? c.healthScore + '%' : '—'}</td>
+      <td style="font-size:11px;max-width:150px;overflow:hidden;text-overflow:ellipsis">${c.primarySource ? esc(c.primarySource).slice(0,12)+'…' : (c.url ? 'URL' : '—')}</td>
+      <td style="font-size:11px">${c.startedAt ? formatUptime((Date.now()-c.startedAt)/1000) : '—'}</td>
       <td>
-        ${ch.logo ? `<img src="${esc(ch.logo)}" class="ch-logo" alt="">` : '<span class="ch-logo-ph">📺</span>'}
-        <strong>${esc(ch.name)}</strong>
-      </td>
-      <td>${esc(ch.group || '-')}</td>
-      <td><span class="status-dot-sm ${stateClass(ch.state)}"></span> ${stateLabel(ch.state)}</td>
-      <td>${ch.viewerCount || 0}</td>
-      <td>${ch.healthScore !== null && ch.healthScore !== undefined ? ch.healthScore + '%' : '-'}</td>
-      <td>${ch.primarySource ? '✅' : '❌'}</td>
-      <td>${ch.enabled ? '✅ مفعل' : '⏸ معطل'}</td>
-      <td class="actions-cell">
-        <button class="btn-sm" onclick="toggleChannel('${ch.id}')" title="${ch.enabled ? 'تعطيل' : 'تفعيل'}">${ch.enabled ? '⏸' : '▶'}</button>
-        <button class="btn-sm" onclick="editChannel('${ch.id}')" title="تعديل">✏️</button>
-        <button class="btn-sm btn-danger" onclick="deleteChannel('${ch.id}')" title="حذف">🗑️</button>
+        <button class="btn btn-sm" onclick="streamAction('${c.id}','${c.state==='ONLINE'?'stop':'start'}')">${c.state==='ONLINE'?'⏹':'▶️'}</button>
+        <button class="btn btn-sm" onclick="editChannel('${c.id}')">✏️</button>
+        <button class="btn btn-sm" onclick="deleteChannel('${c.id}')">🗑️</button>
       </td>
     </tr>
-  `).join('');
+  `).join('') || '<tr><td colspan="10" class="empty-row">لا توجد قنوات</td></tr>';
 }
 
-function filterChannels() { renderChannels(); }
-
-function toggleAll() {
-  const checked = document.getElementById('select-all')?.checked;
-  document.querySelectorAll('.channel-check').forEach(cb => cb.checked = checked);
+function filterTable(pfx) {
+  if (pfx === 'ch') renderChannels();
+  if (pfx === 'st') renderStreams();
+  if (pfx === 'vw') renderViewers();
 }
 
-function getSelectedIds() {
-  return Array.from(document.querySelectorAll('.channel-check:checked')).map(cb => cb.value);
+function toggleAll(pfx) {
+  const checked = document.getElementById(pfx + '-select-all').checked;
+  document.querySelectorAll('.' + pfx + '-cb').forEach(cb => cb.checked = checked);
 }
 
-async function bulkEnable() {
-  const ids = getSelectedIds();
-  if (!ids.length) return showToast('اختر قنوات أولاً', 'warn');
-  await api('POST', '/channels/bulk/enable', { ids });
-  loadChannels();
+async function bulkAction(action) {
+  const ids = Array.from(document.querySelectorAll('.ch-cb:checked')).map(cb => cb.value);
+  if (!ids.length) return;
+  let res;
+  if (action === 'enable') res = await api('/admin/channels/bulk/enable', { method: 'POST', body: { ids } });
+  if (action === 'disable') res = await api('/admin/channels/bulk/disable', { method: 'POST', body: { ids } });
+  if (action === 'delete') {
+    if (!confirm('حذف ' + ids.length + ' قناة?')) return;
+    res = await api('/admin/channels/bulk/delete', { method: 'POST', body: { ids } });
+  }
+  if (res) loadChannels();
 }
 
-async function bulkDisable() {
-  const ids = getSelectedIds();
-  if (!ids.length) return showToast('اختر قنوات أولاً', 'warn');
-  await api('POST', '/channels/bulk/disable', { ids });
-  loadChannels();
-}
-
-async function bulkDelete() {
-  const ids = getSelectedIds();
-  if (!ids.length) return showToast('اختر قنوات أولاً', 'warn');
-  if (!confirm(`حذف ${ids.length} قناة؟`)) return;
-  await api('POST', '/channels/bulk/delete', { ids });
-  loadChannels();
-}
-
-async function toggleChannel(id) {
-  const ch = channelsData.find(c => c.id === id);
-  if (!ch) return;
-  await api('POST', `/channels/${id}/${ch.enabled ? 'disable' : 'enable'}`);
-  loadChannels();
+async function streamAction(id, action) {
+  if (action === 'start') await api('/admin/streams/' + id + '/start', { method: 'POST' });
+  else await api('/admin/streams/' + id + '/stop', { method: 'POST' });
+  setTimeout(loadChannels, 500);
 }
 
 async function deleteChannel(id) {
-  if (!confirm('حذف القناة؟')) return;
-  await api('DELETE', `/channels/${id}`);
+  if (!confirm('حذف القناة?')) return;
+  await api('/admin/channels/' + id, { method: 'DELETE' });
   loadChannels();
 }
 
 async function showAddChannel() {
-  let sourcesRes = await api('GET', '/sources');
-  const sourcesList = sourcesRes?.sources || [];
+  document.getElementById('modal-title').textContent = '➕ إضافة قناة';
+  const sources = await api('/admin/sources');
+  const srcOpts = (sources?.sources||[]).map(s => `<option value="${s.id}">${esc(s.name)} (${s.type})</option>`).join('');
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-row">
+      <div class="form-group"><label>الاسم</label><input id="f-ch-name"></div>
+      <div class="form-group"><label>الرقم</label><input id="f-ch-number" type="number"></div>
+    </div>
+    <div class="form-group"><label>المجموعة</label><input id="f-ch-group"></div>
+    <div class="form-row">
+      <div class="form-group"><label>المصدر</label><select id="f-ch-source">${srcOpts}</select></div>
+      <div class="form-group"><label>Stream ID</label><input id="f-ch-streamid"></div>
+    </div>
+    <div class="form-group"><label>أو رابط مباشر</label><input id="f-ch-url"></div>
+    <div class="form-row">
+      <div class="form-group"><label>الترميز</label><select id="f-ch-vcodec"><option value="copy">copy</option><option value="libx264">libx264</option></select></div>
+      <div class="form-group"><label>الترميز الصوتي</label><select id="f-ch-acodec"><option value="copy">copy</option><option value="aac">aac</option></select></div>
+    </div>
+    <button class="btn-primary" onclick="addChannel()">➕ إضافة</button>
+  `;
+  document.getElementById('modal-overlay').style.display = 'flex';
+  document.getElementById('modal').style.display = 'flex';
+}
 
-  showModal('إضافة قناة', `
-    <form id="channel-form">
-      <label>الاسم <span class="req">*</span><input type="text" id="ch-name" required placeholder="اسم القناة"></label>
-      <label>المجموعة <input type="text" id="ch-group" placeholder="Sports, News, ..."></label>
-      <label>الرقم <input type="number" id="ch-number" min="0" value="0"></label>
-      <label>اللغة <input type="text" id="ch-language" placeholder="ar, en, ..."></label>
-      <label>الدولة <input type="text" id="ch-country" placeholder="SA, AE, ..."></label>
-      <label>شعار (URL) <input type="url" id="ch-logo" placeholder="https://..."></label>
-      
-      <h4 style="margin:16px 0 8px;color:#d4a017;border-bottom:1px solid #333;padding-bottom:4px;">🔗 المصدر عبر Source (اختياري)</h4>
-      <label>المصدر الرئيسي
-        <select id="ch-source">
-          <option value="">-- اختر مصدراً --</option>
-          ${sourcesList.map(s => `<option value="${s.id}">${esc(s.name)} (${s.type})</option>`).join('')}
-        </select>
-      </label>
-      <label>Stream ID
-        <input type="text" id="ch-stream-id" placeholder="ID في حالة Xtream، أو URL في حالة M3U">
-      </label>
-      
-      <h4 style="margin:16px 0 8px;color:#d4a017;border-bottom:1px solid #333;padding-bottom:4px;">🌐 رابط مباشر (بدون Source)</h4>
-      <label>URL مباشر
-        <input type="url" id="ch-url" placeholder="https://example.com/stream.m3u8">
-      </label>
-      <label>Referer <small class="tooltip-text" title="يُستخدم عندما يتحقق الخادم من مصدر الطلب">ℹ️</small>
-        <input type="text" id="ch-referer" placeholder="https://example.com">
-      </label>
-      <label>Origin
-        <input type="text" id="ch-origin" placeholder="https://example.com">
-      </label>
-      <label>User-Agent
-        <input type="text" id="ch-useragent" placeholder="Mozilla/5.0...">
-      </label>
-      <label>Cookie
-        <input type="text" id="ch-cookie" placeholder="session=abc123; token=xyz">
-      </label>
-      
-      <h4 style="margin:16px 0 8px;color:#d4a017;border-bottom:1px solid #333;padding-bottom:4px;">⚙️ إعدادات البث</h4>
-      <label>دقة البث <input type="text" id="ch-resolution" placeholder="1920x1080"></label>
-      <label>معدل البت (kbps) <input type="number" id="ch-bitrate" value="0"></label>
-      <label>عدد FPS <input type="number" id="ch-fps" value="30"></label>
-      <label>Video Codec <input type="text" id="ch-vcodec" placeholder="copy, h264, h265"></label>
-      <label>Audio Codec <input type="text" id="ch-acodec" placeholder="copy, aac, mp3"></label>
-      <label class="checkbox-label">
-        <input type="checkbox" id="ch-enabled" checked>
-        <span>مفعل</span>
-      </label>
-      <button type="submit" class="btn-primary">إضافة القناة</button>
-    </form>
-  `);
-
-  document.getElementById('channel-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const result = await api('POST', '/channels', {
-      name: document.getElementById('ch-name').value,
-      group: document.getElementById('ch-group').value,
-      number: parseInt(document.getElementById('ch-number').value) || 0,
-      language: document.getElementById('ch-language').value,
-      country: document.getElementById('ch-country').value,
-      logo: document.getElementById('ch-logo').value,
-      primarySource: document.getElementById('ch-source').value || null,
-      primaryStreamId: document.getElementById('ch-stream-id').value || null,
-      url: document.getElementById('ch-url').value || '',
-      referer: document.getElementById('ch-referer').value || '',
-      origin: document.getElementById('ch-origin').value || '',
-      userAgent: document.getElementById('ch-useragent').value || '',
-      cookie: document.getElementById('ch-cookie').value || '',
-      resolution: document.getElementById('ch-resolution').value || '',
-      bitrate: parseInt(document.getElementById('ch-bitrate').value) || 0,
-      fps: parseInt(document.getElementById('ch-fps').value) || null,
-      videoCodec: document.getElementById('ch-vcodec').value || 'copy',
-      audioCodec: document.getElementById('ch-acodec').value || 'copy',
-      enabled: document.getElementById('ch-enabled').checked
-    });
-    if (result) {
-      closeModal();
-      loadChannels();
-      showToast('تم إضافة القناة', 'success');
-    }
-  });
+async function addChannel() {
+  const name = document.getElementById('f-ch-name').value;
+  const source = document.getElementById('f-ch-source').value;
+  const streamId = document.getElementById('f-ch-streamid').value;
+  const url = document.getElementById('f-ch-url').value;
+  const body = {
+    name: name || 'قناة جديدة',
+    number: parseInt(document.getElementById('f-ch-number').value) || 0,
+    group: document.getElementById('f-ch-group').value,
+    primarySource: source || null,
+    primaryStreamId: streamId || null,
+    url: url || '',
+    videoCodec: document.getElementById('f-ch-vcodec').value,
+    audioCodec: document.getElementById('f-ch-acodec').value
+  };
+  const res = await api('/admin/channels', { method: 'POST', body });
+  if (res && res.channel) { closeModal(); loadChannels(); }
+  else alert('فشل: ' + (res?.error || ''));
 }
 
 async function editChannel(id) {
-  const ch = channelsData.find(c => c.id === id);
+  const ch = CHANNELS.find(c => c.id === id);
   if (!ch) return;
-
-  let sourcesRes = await api('GET', '/sources');
-  const sourcesList = sourcesRes?.sources || [];
-
-  showModal('تعديل القناة', `
-    <form id="channel-form">
-      <label>الاسم <span class="req">*</span><input type="text" id="ch-name" value="${esc(ch.name)}" required></label>
-      <label>المجموعة <input type="text" id="ch-group" value="${esc(ch.group || '')}"></label>
-      <label>الرقم <input type="number" id="ch-number" value="${ch.number || 0}"></label>
-      <label>اللغة <input type="text" id="ch-language" value="${esc(ch.language || '')}"></label>
-      <label>الدولة <input type="text" id="ch-country" value="${esc(ch.country || '')}"></label>
-      <label>شعار (URL) <input type="url" id="ch-logo" value="${esc(ch.logo || '')}"></label>
-      
-      <h4 style="margin:16px 0 8px;color:#d4a017;border-bottom:1px solid #333;padding-bottom:4px;">🔗 المصدر عبر Source (اختياري)</h4>
-      <label>المصدر الرئيسي
-        <select id="ch-source">
-          <option value="">-- بدون مصدر --</option>
-          ${sourcesList.map(s => `<option value="${s.id}" ${s.id === ch.primarySource ? 'selected' : ''}>${esc(s.name)} (${s.type})</option>`).join('')}
-        </select>
-      </label>
-      <label>Stream ID
-        <input type="text" id="ch-stream-id" value="${esc(ch.primaryStreamId || '')}">
-      </label>
-      
-      <h4 style="margin:16px 0 8px;color:#d4a017;border-bottom:1px solid #333;padding-bottom:4px;">🌐 رابط مباشر (بدون Source)</h4>
-      <label>URL مباشر <input type="url" id="ch-url" value="${esc(ch.url || '')}" placeholder="https://example.com/stream.m3u8"></label>
-      <label>Referer <small class="tooltip-text" title="يُستخدم عندما يتحقق الخادم من مصدر الطلب">ℹ️</small>
-        <input type="text" id="ch-referer" value="${esc(ch.referer || '')}" placeholder="https://example.com">
-      </label>
-      <label>Origin <input type="text" id="ch-origin" value="${esc(ch.origin || '')}" placeholder="https://example.com"></label>
-      <label>User-Agent <input type="text" id="ch-useragent" value="${esc(ch.userAgent || '')}" placeholder="Mozilla/5.0..."></label>
-      <label>Cookie <input type="text" id="ch-cookie" value="${esc(ch.cookie || '')}" placeholder="session=abc123; token=xyz"></label>
-      
-      <h4 style="margin:16px 0 8px;color:#d4a017;border-bottom:1px solid #333;padding-bottom:4px;">⚙️ إعدادات البث</h4>
-      <label>دقة البث <input type="text" id="ch-resolution" value="${esc(ch.resolution || '')}"></label>
-      <label>معدل البت (kbps) <input type="number" id="ch-bitrate" value="${ch.bitrate || 0}"></label>
-      <label>عدد FPS <input type="number" id="ch-fps" value="${ch.fps || 30}"></label>
-      <label>Video Codec <input type="text" id="ch-vcodec" value="${esc(ch.videoCodec || 'copy')}"></label>
-      <label>Audio Codec <input type="text" id="ch-acodec" value="${esc(ch.audioCodec || 'copy')}"></label>
-      <label class="checkbox-label">
-        <input type="checkbox" id="ch-enabled" ${ch.enabled ? 'checked' : ''}>
-        <span>مفعل</span>
-      </label>
-      <button type="submit" class="btn-primary">حفظ التعديلات</button>
-    </form>
-  `);
-
-  document.getElementById('channel-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const result = await api('PUT', `/channels/${id}`, {
-      name: document.getElementById('ch-name').value,
-      group: document.getElementById('ch-group').value,
-      number: parseInt(document.getElementById('ch-number').value) || 0,
-      language: document.getElementById('ch-language').value,
-      country: document.getElementById('ch-country').value,
-      logo: document.getElementById('ch-logo').value,
-      primarySource: document.getElementById('ch-source').value || null,
-      primaryStreamId: document.getElementById('ch-stream-id').value || null,
-      url: document.getElementById('ch-url').value || '',
-      referer: document.getElementById('ch-referer').value || '',
-      origin: document.getElementById('ch-origin').value || '',
-      userAgent: document.getElementById('ch-useragent').value || '',
-      cookie: document.getElementById('ch-cookie').value || '',
-      resolution: document.getElementById('ch-resolution').value || '',
-      bitrate: parseInt(document.getElementById('ch-bitrate').value) || 0,
-      fps: parseInt(document.getElementById('ch-fps').value) || null,
-      videoCodec: document.getElementById('ch-vcodec').value || 'copy',
-      audioCodec: document.getElementById('ch-acodec').value || 'copy',
-      enabled: document.getElementById('ch-enabled').checked
-    });
-    if (result) {
-      closeModal();
-      loadChannels();
-      showToast('تم حفظ التعديلات', 'success');
-    }
-  });
+  document.getElementById('modal-title').textContent = '✏️ تعديل: ' + esc(ch.name);
+  const sources = await api('/admin/sources');
+  const srcOpts = (sources?.sources||[]).map(s => `<option value="${s.id}" ${s.id===ch.primarySource?'selected':''}>${esc(s.name)}</option>`).join('');
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-row">
+      <div class="form-group"><label>الاسم</label><input id="f-ch-name" value="${esc(ch.name)}"></div>
+      <div class="form-group"><label>الرقم</label><input id="f-ch-number" type="number" value="${ch.number||0}"></div>
+    </div>
+    <div class="form-group"><label>المجموعة</label><input id="f-ch-group" value="${esc(ch.group||'')}"></div>
+    <div class="form-row">
+      <div class="form-group"><label>المصدر</label><select id="f-ch-source">${srcOpts}</select></div>
+      <div class="form-group"><label>Stream ID</label><input id="f-ch-streamid" value="${esc(ch.primaryStreamId||'')}"></div>
+    </div>
+    <div class="form-group"><label>رابط مباشر</label><input id="f-ch-url" value="${esc(ch.url||'')}"></div>
+    <button class="btn-primary" onclick="updateChannel('${id}')">💾 حفظ</button>
+  `;
+  openModal();
 }
 
-// ─── Sources ─────────────────────────────────────────────
-let sourcesData = [];
+async function updateChannel(id) {
+  const body = {
+    name: document.getElementById('f-ch-name').value,
+    number: parseInt(document.getElementById('f-ch-number').value) || 0,
+    group: document.getElementById('f-ch-group').value,
+    primarySource: document.getElementById('f-ch-source').value || null,
+    primaryStreamId: document.getElementById('f-ch-streamid').value || null,
+    url: document.getElementById('f-ch-url').value || ''
+  };
+  const res = await api('/admin/channels/' + id, { method: 'PUT', body });
+  if (res) { closeModal(); loadChannels(); }
+}
 
+// ═══ SOURCES ═══
 async function loadSources() {
-  const d = await api('GET', '/sources');
-  sourcesData = d?.sources || [];
-  renderSources();
-}
-
-function renderSources() {
-  const tbody = document.getElementById('sources-body');
-  if (!tbody) return;
-
-  if (!sourcesData.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-row">لا توجد مصادر. أضف مصدراً جديداً.</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = sourcesData.map(s => `
+  const data = await api('/admin/sources');
+  if (!data) return;
+  SOURCES = data.sources || [];
+  document.getElementById('src-tbody').innerHTML = SOURCES.map(s => `
     <tr>
       <td><strong>${esc(s.name)}</strong></td>
-      <td><span class="badge badge-${s.type}">${s.type || 'm3u'}</span></td>
-      <td>${s.enabled ? '<span class="text-green">🟢 مفعل</span>' : '<span class="text-red">🔴 معطل</span>'}</td>
-      <td>${s.totalChannels || 0}</td>
-      <td>${s.lastSync ? new Date(s.lastSync).toLocaleString('ar-SA') : 'لم تتم'}</td>
-      <td>${s.status || '-'}</td>
-      <td>${s.healthScore !== null && s.healthScore !== undefined ? s.healthScore + '%' : '-'}</td>
-      <td class="actions-cell">
-        <button class="btn-sm" onclick="toggleSource('${s.id}')">${s.enabled ? '⏸' : '▶'}</button>
-        <button class="btn-sm" onclick="importSource('${s.id}')" title="استيراد">📥</button>
-        <button class="btn-sm btn-danger" onclick="deleteSource('${s.id}')" title="حذف">🗑️</button>
+      <td>${s.type}</td>
+      <td><span class="badge-state ${(s.status||'unknown') === 'healthy' ? 'online' : 'error'}">${s.status||'unknown'}</span></td>
+      <td>${s.totalChannels||0}</td>
+      <td style="font-size:11px">${s.lastSync ? new Date(s.lastSync).toLocaleString('ar-SA') : '—'}</td>
+      <td>${s.enabled ? '✅' : '❌'}</td>
+      <td>${s.failedChannels||0}</td>
+      <td>
+        ${s.enabled ? `<button class="btn btn-sm" onclick="toggleSource('${s.id}','disable')">تعطيل</button>` : `<button class="btn btn-sm" onclick="toggleSource('${s.id}','enable')">تفعيل</button>`}
+        <button class="btn btn-sm" onclick="importSource('${s.id}')">📥 استيراد</button>
+        <button class="btn btn-sm" onclick="editSource('${s.id}')">✏️</button>
+        <button class="btn btn-sm" onclick="deleteSource('${s.id}')">🗑️</button>
       </td>
     </tr>
-  `).join('');
+  `).join('') || '<tr><td colspan="8" class="empty-row">لا توجد مصادر</td></tr>';
 }
 
-async function toggleSource(id) {
-  const s = sourcesData.find(x => x.id === id);
-  if (!s) return;
-  await api('PUT', `/sources/${id}`, { enabled: !s.enabled });
+async function toggleSource(id, action) {
+  await api('/admin/sources/' + id + '/' + action, { method: 'POST' });
   loadSources();
 }
 
 async function importSource(id) {
-  showToast('جاري الاستيراد...', 'info');
-  const r = await api('POST', `/sources/${id}/import`);
-  if (r) {
-    showToast(`تم استيراد ${r.added || 0} قناة جديدة، تحديث ${r.updated || 0}`, 'success');
-    loadSources();
-    loadChannels();
-  } else {
-    showToast('فشل الاستيراد', 'error');
-  }
+  const r = await api('/admin/sources/' + id + '/import', { method: 'POST' });
+  if (r) loadSources();
 }
 
 async function deleteSource(id) {
-  if (!confirm('حذف المصدر؟')) return;
-  await api('DELETE', `/sources/${id}`);
+  if (!confirm('حذف المصدر?')) return;
+  await api('/admin/sources/' + id, { method: 'DELETE' });
   loadSources();
-  showToast('تم الحذف', 'success');
+}
+
+async function importAllSources() {
+  const r = await api('/admin/sources/import-all', { method: 'POST' });
+  if (r) { loadSources(); loadChannels(); }
 }
 
 async function showAddSource() {
-  showModal('إضافة مصدر', `
-    <form id="source-form">
-      <label>الاسم <span class="req">*</span>
-        <input type="text" id="src-name" required placeholder="اسم المصدر">
-      </label>
-      <label>النوع
-        <select id="src-type" onchange="onSourceTypeChange()">
-          <option value="m3u">M3U Playlist (ملف أو رابط)</option>
-          <option value="direct">رابط مباشر (Direct Stream URL)</option>
-          <option value="xtream">Xtream Codes</option>
-          <option value="stalker">Stalker Portal</option>
-          <option value="mag">MAG Device</option>
-          <option value="json">JSON API</option>
-          <option value="csv">CSV File</option>
-        </select>
-      </label>
-      <div id="src-fields-m3u">
-        <label>رابط M3U
-          <input type="text" id="src-url" placeholder="https://example.com/list.m3u أو مسار ملف محلي">
-        </label>
-        <label>Referer <small class="tooltip-text" title="يُستخدم عندما يتحقق الخادم من مصدر الطلب">ℹ️</small>
-          <input type="text" id="src-referer" placeholder="https://example.com">
-        </label>
-        <label>Origin <small class="tooltip-text" title="رأس Origin لطلبات CORS">ℹ️</small>
-          <input type="text" id="src-origin" placeholder="https://example.com">
-        </label>
-        <label>User Agent
-          <input type="text" id="src-ua" placeholder="Mozilla/5.0 ...">
-        </label>
-        <label class="checkbox-label">
-          <input type="checkbox" id="src-autosync">
-          <span>مزامنة تلقائية</span>
-        </label>
-      </div>
-      <div id="src-fields-xtream" style="display:none">
-        <label>عنوان الخادم <input type="text" id="src-xtream-url" placeholder="http://panel.example.com:8080"></label>
-        <label>اسم المستخدم <input type="text" id="src-xtream-user"></label>
-        <label>كلمة المرور <input type="password" id="src-xtream-pass"></label>
-      </div>
-      <div id="src-fields-mag" style="display:none">
-        <label>عنوان البوابة <input type="text" id="src-mag-url" placeholder="http://portal.example.com/stalker_portal"></label>
-        <label>MAC Address <input type="text" id="src-mac" placeholder="00:1A:79:..."></label>
-      </div>
-      <label class="checkbox-label">
-        <input type="checkbox" id="src-enabled" checked>
-        <span>مفعل</span>
-      </label>
-      <button type="submit" class="btn-primary">إضافة المصدر</button>
-    </form>
-  `);
-
-  document.getElementById('source-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const type = document.getElementById('src-type').value;
-    let payload = {
-      name: document.getElementById('src-name').value,
-      type,
-      enabled: document.getElementById('src-enabled').checked
-    };
-
-    if (type === 'm3u' || type === 'direct' || type === 'json' || type === 'csv') {
-      payload.baseUrl = document.getElementById('src-url')?.value || '';
-      payload.referer = document.getElementById('src-referer')?.value || '';
-      payload.origin = document.getElementById('src-origin')?.value || '';
-      payload.userAgent = document.getElementById('src-ua')?.value || '';
-      payload.autoSync = document.getElementById('src-autosync')?.checked || false;
-    } else if (type === 'xtream') {
-      payload.baseUrl = document.getElementById('src-xtream-url')?.value || '';
-      payload.username = document.getElementById('src-xtream-user')?.value || '';
-      payload.password = document.getElementById('src-xtream-pass')?.value || '';
-    } else if (type === 'stalker' || type === 'mag') {
-      payload.baseUrl = document.getElementById('src-mag-url')?.value || '';
-      payload.mac = document.getElementById('src-mac')?.value || '';
-    }
-
-    const result = await api('POST', '/sources', payload);
-    if (result && (result.source || result.id)) {
-      closeModal();
-      loadSources();
-      showToast('تم إضافة المصدر', 'success');
-      // Auto-import
-      const srcId = result.source?.id || result.id;
-      if (srcId) setTimeout(() => importSource(srcId), 500);
-    } else {
-      showToast('فشل إضافة المصدر', 'error');
-    }
-  });
+  document.getElementById('modal-title').textContent = '➕ إضافة مصدر';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="form-row">
+      <div class="form-group"><label>الاسم</label><input id="f-src-name"></div>
+      <div class="form-group"><label>النوع</label><select id="f-src-type">
+        <option value="m3u">M3U</option><option value="m3u_file">M3U File</option>
+        <option value="xtream">Xtream</option><option value="stalker">Stalker</option>
+        <option value="hls">Direct HLS</option>
+      </select></div>
+    </div>
+    <div class="form-group"><label>الرابط</label><input id="f-src-url"></div>
+    <div class="form-row">
+      <div class="form-group"><label>اسم المستخدم</label><input id="f-src-user"></div>
+      <div class="form-group"><label>كلمة المرور</label><input id="f-src-pass" type="password"></div>
+    </div>
+    <button class="btn-primary" onclick="addSource()">➕ إضافة</button>
+  `;
+  openModal();
 }
 
-function onSourceTypeChange() {
-  const type = document.getElementById('src-type')?.value;
-  document.getElementById('src-fields-m3u').style.display = (type === 'm3u' || type === 'direct' || type === 'json' || type === 'csv') ? '' : 'none';
-  document.getElementById('src-fields-xtream').style.display = type === 'xtream' ? '' : 'none';
-  document.getElementById('src-fields-mag').style.display = (type === 'stalker' || type === 'mag') ? '' : 'none';
+async function addSource() {
+  const body = {
+    name: document.getElementById('f-src-name').value || 'مصدر جديد',
+    type: document.getElementById('f-src-type').value,
+    baseUrl: document.getElementById('f-src-url').value,
+    username: document.getElementById('f-src-user').value,
+    password: document.getElementById('f-src-pass').value
+  };
+  const res = await api('/admin/sources', { method: 'POST', body });
+  if (res) { closeModal(); loadSources(); }
 }
 
-async function importAll() {
-  showToast('جاري استيراد جميع المصادر...', 'info');
-  const r = await api('POST', '/sources/import-all');
-  if (r) {
-    showToast('تم استيراد جميع المصادر', 'success');
-    loadSources();
-    loadChannels();
-  }
+// ═══ STREAMS ═══
+async function loadStreams() {
+  const data = await api('/admin/streams');
+  if (!data) return;
+  STREAMS = data.streams || [];
+  renderStreams();
 }
 
-// ─── Viewers ─────────────────────────────────────────────
-async function loadViewers() {
-  const d = await api('GET', '/viewers');
-  const viewers = d?.viewers || [];
-  const tbody = document.getElementById('viewers-body');
-  if (!tbody) return;
-
-  const search = (document.getElementById('viewer-search')?.value || '').toLowerCase();
-  let filtered = viewers;
-  if (search) {
-    filtered = filtered.filter(v =>
-      (v.ip || '').includes(search) ||
-      (v.device || '').toLowerCase().includes(search)
-    );
-  }
-
-  if (!filtered.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-row">لا يوجد مشاهدون متصلون حالياً</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = filtered.map(v => `
+function renderStreams() {
+  const search = (document.getElementById('st-search')?.value || '').toLowerCase();
+  let list = STREAMS;
+  if (search) list = list.filter(s => (s.channelId||'').toLowerCase().includes(search));
+  
+  document.getElementById('st-tbody').innerHTML = list.map(s => `
     <tr>
-      <td>${esc(v.ip || '-')}</td>
-      <td>${esc(v.device || '-')}</td>
-      <td>${esc(v.browser || '-')}</td>
-      <td>${esc(v.currentChannel || '-')}</td>
-      <td>${formatTime(v.watchTime || 0)}</td>
-      <td>${v.bandwidth ? formatBytes(v.bandwidth) + '/s' : '-'}</td>
-      <td>${v.latency ? v.latency + 'ms' : '-'}</td>
-      <td class="actions-cell">
-        <button class="btn-sm btn-danger" onclick="kickViewer('${v.id}')">طرد</button>
+      <td><strong>${esc(s.channelId||'')}</strong></td>
+      <td><span class="badge-state ${(s.state||'STOPPED').toLowerCase()}">${s.state||'STOPPED'}</span></td>
+      <td>${s.viewers||0}</td>
+      <td style="font-size:11px">${s.pid||'—'}</td>
+      <td>${s.cpu||0}%</td>
+      <td>${fmtBytes((s.memory||0)*1024*1024)}</td>
+      <td style="font-size:11px">${formatUptime(s.uptime||0)}</td>
+      <td>${s.reconnectCount||0}</td>
+      <td style="font-size:11px;max-width:100px;overflow:hidden;text-overflow:ellipsis">${s.currentUrlIndex != null ? '#'+s.currentUrlIndex : '—'}</td>
+      <td style="font-size:10px;max-width:150px;overflow:hidden;text-overflow:ellipsis">${esc(s.currentUrl||'')}</td>
+      <td>
+        <button class="btn btn-sm" onclick="streamAction('${s.channelId}','${s.state==='ONLINE'?'stop':'start'}')">${s.state==='ONLINE'?'⏹':'▶️'}</button>
+        <button class="btn btn-sm" onclick="restartStream('${s.channelId}')">🔄</button>
       </td>
     </tr>
-  `).join('');
+  `).join('') || '<tr><td colspan="11" class="empty-row">لا توجد بثوث نشطة</td></tr>';
 }
 
-function filterViewers() { loadViewers(); }
+async function restartStream(id) {
+  await api('/admin/streams/' + id + '/restart', { method: 'POST' });
+  setTimeout(loadStreams, 1000);
+}
+
+// ═══ FFMPEG ═══
+async function loadFFmpeg() {
+  const data = await api('/admin/streams');
+  if (!data) return;
+  const streams = data.streams || [];
+  const running = streams.filter(s => s.pid);
+  document.getElementById('ffmpeg-cards').innerHTML = running.length
+    ? running.map(s => `
+      <div class="ff-card">
+        <h4><span class="badge-state ${(s.state||'').toLowerCase()}">${s.state}</span> ${esc(s.channelId)} <span style="font-size:11px;color:var(--text2)">PID: ${s.pid}</span></h4>
+        <div class="ff-grid">
+          <div class="ff-item"><strong>CPU</strong> ${s.cpu||0}%</div>
+          <div class="ff-item"><strong>RAM</strong> ${fmtBytes((s.memory||0)*1024*1024)}</div>
+          <div class="ff-item"><strong>وقت التشغيل</strong> ${formatUptime(s.uptime||0)}</div>
+          <div class="ff-item"><strong>المشاهدون</strong> ${s.viewers||0}</div>
+          <div class="ff-item"><strong>المحاولات</strong> ${s.reconnectCount||0}</div>
+          <div class="ff-item" style="grid-column:1/-1"><strong>الـ URL</strong> <span style="font-size:10px;word-break:break-all">${esc(s.currentUrl||'')}</span></div>
+        </div>
+        ${s.hls ? `
+        <div style="margin-top:8px">
+          <div class="hls-metrics">
+            <div class="hls-metric"><div class="val">${s.hls.segmentsOnDisk||0}</div><div class="lbl">مقاطع</div></div>
+            <div class="hls-metric"><div class="val">${s.hls.currentSequence||0}</div><div class="lbl">التسلسل</div></div>
+            <div class="hls-metric"><div class="val">${s.hls.segmentsInPlaylist||0}</div><div class="lbl">بالقائمة</div></div>
+            <div class="hls-metric"><div class="val" style="color:${(s.hls.segmentMisses||0)>0?'var(--red)':'var(--green)'}">${s.hls.segmentMisses||0}</div><div class="lbl">مقاطع مفقودة</div></div>
+          </div>
+        </div>` : ''}
+        <div style="margin-top:8px;display:flex;gap:4px">
+          <button class="btn btn-sm" onclick="streamAction('${s.channelId}','stop')">⏹ إيقاف</button>
+          <button class="btn btn-sm" onclick="restartStream('${s.channelId}')">🔄 إعادة تشغيل</button>
+        </div>
+      </div>
+    `).join('')
+    : '<div class="card"><div class="card-body" style="text-align:center;padding:30px">لا توجد عمليات FFmpeg نشطة</div></div>';
+}
+
+// ═══ VIEWERS ═══
+async function loadViewers() {
+  const data = await api('/admin/viewers');
+  if (!data) return;
+  VIEWERS = data.viewers || [];
+  renderViewers();
+}
+
+function renderViewers() {
+  const search = (document.getElementById('vw-search')?.value || '').toLowerCase();
+  let list = VIEWERS;
+  if (search) list = list.filter(v => (v.ip||'').includes(search) || (v.device||'').toLowerCase().includes(search));
+  
+  document.getElementById('vw-tbody').innerHTML = list.map(v => `
+    <tr>
+      <td>${v.ip||'—'}</td>
+      <td>${esc(v.device||'—')}</td>
+      <td>${esc(v.browser||'—')}</td>
+      <td>${esc(v.currentChannel||'—')}</td>
+      <td>${formatUptime(v.watchTime||0)}</td>
+      <td>${v.bandwidth ? fmtBandwidth(v.bandwidth) : '—'}</td>
+      <td>${v.latency ? v.latency+'ms' : '—'}</td>
+      <td style="font-size:11px">${v.lastHeartbeat ? new Date(v.lastHeartbeat).toLocaleTimeString('ar-SA') : '—'}</td>
+      <td><button class="btn btn-sm" onclick="kickViewer('${v.id}')">🔨 طرد</button></td>
+    </tr>
+  `).join('') || '<tr><td colspan="9" class="empty-row">لا يوجد مشاهدون</td></tr>';
+}
 
 async function kickViewer(id) {
-  await api('POST', `/viewers/${id}/kick`);
+  await api('/admin/viewers/' + id + '/kick', { method: 'POST' });
   loadViewers();
-  showToast('تم طرد المشاهد', 'success');
 }
 
-// ─── Streams ─────────────────────────────────────────────
-async function loadStreams() {
-  const d = await api('GET', '/streams');
-  const streams = d?.streams || [];
-  const tbody = document.getElementById('streams-body');
-  if (!tbody) return;
-
-  if (!streams.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-row">لا توجد بثوث نشطة حالياً</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = streams.map(s => `
-    <tr>
-      <td>${esc(s.channelId || '-')}</td>
-      <td><span class="status-dot-sm ${stateClass(s.state)}"></span> ${stateLabel(s.state)}</td>
-      <td>${s.viewers || 0}</td>
-      <td>${s.pid || '-'}</td>
-      <td>${formatTime(s.uptime || 0)}</td>
-      <td>${s.reconnectCount || 0}</td>
-      <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.currentUrl || '-')}</td>
-      <td class="actions-cell">
-        <button class="btn-sm btn-danger" onclick="stopStream('${s.channelId}')">إيقاف</button>
-      </td>
-    </tr>
-  `).join('');
+// ═══ HLS ═══
+async function loadHls() {
+  const data = await api('/api/hls/debug');
+  if (!data) return;
+  const chs = data.channels || [];
+  document.getElementById('hls-cards').innerHTML = chs.length
+    ? chs.map(ch => `
+      <div class="card">
+        <h3>${esc(ch.channelId||'')} ${ch.producerRunning ? '<span class="live-dot"></span>' : ''}</h3>
+        <div class="hls-metrics">
+          <div class="hls-metric"><div class="val">${ch.segmentsOnDisk||0}</div><div class="lbl">مقاطع على القرص</div></div>
+          <div class="hls-metric"><div class="val">${ch.segmentsInPlaylist||0}</div><div class="lbl">في القائمة</div></div>
+          <div class="hls-metric"><div class="val">${ch.currentSequence||0}</div><div class="lbl">التسلسل الحالي</div></div>
+          <div class="hls-metric"><div class="val ${(ch.missingSegments||0)>0?'red':'green'}">${ch.missingSegments||0}</div><div class="lbl">مقاطع مفقودة</div></div>
+          <div class="hls-metric"><div class="val">${ch.lockedSegments||0}</div><div class="lbl">مقاطع مقفلة</div></div>
+          <div class="hls-metric"><div class="val">${ch.deletedSegments||0}</div><div class="lbl">محذوفة</div></div>
+          <div class="hls-metric"><div class="val">${ch.playlistRewrites||0}</div><div class="lbl">إعادة كتابة</div></div>
+          <div class="hls-metric"><div class="val">${ch.averagePlaylistAge ? (ch.averagePlaylistAge/1000).toFixed(1)+'s' : '—'}</div><div class="lbl">متوسط العمر</div></div>
+        </div>
+        <div style="font-size:11px;color:var(--text2)">
+          ${ch.playlist ? 'آخر مقاطع: ' + ch.playlist.slice(-5).join(', ') : ''}
+        </div>
+      </div>
+    `).join('')
+    : '<div class="card"><div class="card-body" style="text-align:center;padding:30px">لا توجد بيانات HLS</div></div>';
 }
 
-async function stopStream(id) {
-  await api('POST', `/streams/${id}/stop`);
-  loadStreams();
-  showToast('تم إيقاف البث', 'success');
-}
-
-// ─── Cache ───────────────────────────────────────────────
-async function loadCache() {
-  const d = await api('GET', '/cache');
-  if (!d) return;
-
-  const statsEl = document.getElementById('cache-stats');
-  if (statsEl) {
-    statsEl.innerHTML = `
-      <div class="stat-card"><div class="stat-value">${formatBytes(d.ram?.used || d.ramUsedBytes || 0)}</div><div class="stat-label">RAM مستخدم</div></div>
-      <div class="stat-card"><div class="stat-value">${formatBytes(d.disk?.used || d.diskUsedBytes || 0)}</div><div class="stat-label">قرص مستخدم</div></div>
-      <div class="stat-card"><div class="stat-value">${d.performance?.hitRate || d.hitRate || 100}%</div><div class="stat-label">نسبة الإصابة</div></div>
-      <div class="stat-card"><div class="stat-value">${d.caches?.segments || d.segmentCount || 0}</div><div class="stat-label">المقاطع</div></div>
-    `;
-  }
-}
-
-async function clearCache() {
-  if (!confirm('مسح الكاش بالكامل؟')) return;
-  await api('POST', '/cache/clear');
-  loadCache();
-  showToast('تم مسح الكاش', 'success');
-}
-
-// ─── Health ──────────────────────────────────────────────
+// ═══ HEALTH ═══
 async function loadHealth() {
-  const d = await api('GET', '/health');
-  if (!d) return;
-
-  const summary = d.channels || {};
-  const statsEl = document.getElementById('health-stats');
-  if (statsEl) {
-    statsEl.innerHTML = `
-      <div class="stat-card"><div class="stat-value">${summary.averageScore || 100}%</div><div class="stat-label">معدل الصحة</div></div>
-      <div class="stat-card"><div class="stat-value text-green">${summary.healthy || 0}</div><div class="stat-label">سليم</div></div>
-      <div class="stat-card"><div class="stat-value text-yellow">${summary.warning || 0}</div><div class="stat-label">تحذير</div></div>
-      <div class="stat-card"><div class="stat-value text-red">${summary.critical || 0}</div><div class="stat-label">خطير</div></div>
-    `;
-  }
-
-  // Health details from dashboard
-  const dashData = await api('GET', '/dashboard');
-  const details = dashData?.healthDetails || [];
-  const tbody = document.getElementById('health-body');
-  if (!tbody) return;
-
-  if (!details.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-row">لا توجد بيانات صحة - ابدأ البث أولاً</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = details.map(h => `
+  const data = await api('/admin/health');
+  if (!data) return;
+  HEALTH = data.channels || [];
+  
+  const stats = { healthy: 0, warning: 0, critical: 0 };
+  HEALTH.forEach(h => {
+    if (h.score >= 80) stats.healthy++;
+    else if (h.score >= 50) stats.warning++;
+    else stats.critical++;
+  });
+  
+  document.getElementById('health-stats-row').innerHTML = `
+    <div class="stat"><div class="val green">${stats.healthy}</div><div class="lbl">سليم</div></div>
+    <div class="stat"><div class="val yellow">${stats.warning}</div><div class="lbl">تحذير</div></div>
+    <div class="stat"><div class="val red">${stats.critical}</div><div class="lbl">خطير</div></div>
+  `;
+  
+  document.getElementById('hl-tbody').innerHTML = HEALTH.map(h => `
     <tr>
-      <td>${esc(h.channelId || '-')}</td>
-      <td><span class="health-score health-${h.score >= 80 ? 'good' : h.score >= 50 ? 'warn' : 'bad'}">${h.score || 0}%</span></td>
-      <td>${h.latency ? h.latency + 'ms' : '-'}</td>
-      <td>${h.bitrate ? formatBytes(h.bitrate) + '/s' : '-'}</td>
-      <td>${h.resolution || '-'}</td>
-      <td>${h.codec || '-'}</td>
-      <td>${formatTime(h.uptime || 0)}</td>
+      <td><strong>${esc(h.channelId||'')}</strong></td>
+      <td><span class="badge-health ${h.score >= 80 ? 'high' : h.score >= 50 ? 'med' : 'low'}"></span> ${h.score||0}</td>
+      <td>${h.latency ? h.latency+'ms' : '—'}</td>
+      <td>${h.bitrate ? fmtBandwidth(h.bitrate) : '—'}</td>
+      <td>${h.resolution||'—'}</td>
+      <td>${h.codec||'—'}</td>
+      <td>${h.segmentsOnDisk||0}</td>
+      <td>${h.mediaSequence||0}</td>
+      <td>${formatUptime(h.uptime||0)}</td>
     </tr>
-  `).join('');
+  `).join('') || '<tr><td colspan="9" class="empty-row">لا توجد بيانات صحة</td></tr>';
 }
 
-// ─── Settings ────────────────────────────────────────────
+// ═══ DIAGNOSTICS ═══
+async function loadDiagnostics() {
+  const chData = await api('/admin/channels');
+  const chs = chData?.channels || [];
+  const broken = chs.filter(c => c.state === 'ERROR' || (!c.primarySource && !c.url));
+  const healthy = chs.filter(c => c.state === 'ONLINE');
+  
+  document.getElementById('diag-stats').innerHTML = `
+    <div class="stat"><div class="val green">${healthy.length}</div><div class="lbl">سليمة</div></div>
+    <div class="stat"><div class="val red">${broken.length}</div><div class="lbl">معطلة</div></div>
+    <div class="stat"><div class="val">${chs.length}</div><div class="lbl">الإجمالي</div></div>
+  `;
+  
+  let body = '';
+  if (broken.length) {
+    body += '<h4 style="margin-bottom:8px;color:var(--red)">⚠️ قنوات معطلة</h4>';
+    broken.forEach(c => {
+      const missingBinding = !c.primarySource && !c.primaryStreamId && !c.url;
+      body += `<div class="diag-cause ${missingBinding ? 'high' : 'med'}">
+        <strong>${esc(c.name)||c.id}</strong>
+        <div style="margin-top:4px;font-size:12px">${missingBinding
+          ? '🔴 السبب: القناة ليس لديها primarySource أو primaryStreamId أو رابط مباشر'
+          : '🟡 الحالة: ' + (c.state||'STOPPED')}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">الإصلاح: أعد استيراد المصادر أو أضف رابط مباشر</div>
+      </div>`;
+    });
+  }
+  if (healthy.length) {
+    body += '<h4 style="margin-top:16px;margin-bottom:8px;color:var(--green)">✅ قنوات سليمة</h4>';
+    healthy.slice(0, 10).forEach(c => {
+      body += `<div class="info-row"><span class="k">${esc(c.name)||c.id}</span><span class="v green">ONLINE (${c.viewerCount||0} مشاهد)</span></div>`;
+    });
+    if (healthy.length > 10) body += `<div class="info-row"><span class="k">و ${healthy.length-10} أخرى...</span></div>`;
+  }
+  document.getElementById('diag-body').innerHTML = body || '<p>جميع القنوات سليمة ✅</p>';
+}
+
+// ═══ LOGS ═══
+async function loadLogs() {
+  const level = document.getElementById('log-level').value;
+  const search = document.getElementById('log-search').value;
+  let url = '/admin/logs';
+  if (level) url += '?level=' + level;
+  if (search) url += (level ? '&' : '?') + 'search=' + encodeURIComponent(search);
+  const data = await api(url);
+  if (!data) return;
+  LOGS_CACHE = data.logs || [];
+  
+  document.getElementById('logs-container').innerHTML = LOGS_CACHE.map(l => `
+    <div class="log-entry">
+      <span class="log-time">${l.timestamp ? new Date(l.timestamp).toLocaleString('ar-SA') : ''}</span>
+      <span class="log-level ${l.level||'info'}">${(l.level||'info').toUpperCase()}</span>
+      <span class="log-msg">${esc(l.message||'')}</span>
+    </div>
+  `).join('') || '<div class="log-entry"><span class="log-msg">لا توجد سجلات</span></div>';
+}
+
+// ═══ SETTINGS ═══
 async function loadSettings() {
-  const d = await api('GET', '/config');
-  const cfg = d?.config || {};
+  const data = await api('/admin/config');
+  if (!data) return;
+  const cfg = data.config || {};
+  const s = (id, val) => `<div class="form-group"><label>${id}</label><input id="st-${id}" value="${esc(String(val||''))}"></div>`;
 
-  const streamEl = document.getElementById('stream-settings');
-  if (streamEl) {
-    streamEl.innerHTML = `
-      <label title="مدة كل مقطع HLS بالثواني">HLS Time (ثواني): <input type="number" id="s-hls-time" value="${cfg.ffmpeg?.hlsTime || 2}"></label>
-      <label title="عدد المقاطع في قائمة التشغيل">HLS List Size: <input type="number" id="s-hls-list" value="${cfg.ffmpeg?.hlsListSize || 10}"></label>
-      <label title="وقت الخمول قبل إيقاف البث تلقائياً">Idle Stop (ثواني): <input type="number" id="s-idle" value="${cfg.stream?.idleStopSeconds || 30}"></label>
-      <label title="إعادة تشغيل البث تلقائياً عند التعطل"><input type="checkbox" id="s-auto-restart" ${cfg.stream?.autoRestartCrashed !== false ? 'checked' : ''}> إعادة التشغيل التلقائي</label>
-    `;
-  }
-
-  const cacheEl = document.getElementById('cache-settings');
-  if (cacheEl) {
-    cacheEl.innerHTML = `
-      <label title="حجم الكاش في الذاكرة العشوائية">RAM Cache (MB): <input type="number" id="s-ram" value="${cfg.cache?.ramBufferSizeMb || 256}"></label>
-      <label title="حجم الكاش على القرص">Disk Cache (MB): <input type="number" id="s-disk" value="${cfg.cache?.diskCacheSizeMb || 5120}"></label>
-    `;
-  }
-
-  const ffmpegEl = document.getElementById('ffmpeg-settings');
-  if (ffmpegEl) {
-    ffmpegEl.innerHTML = `
-      <label title="مسار برنامج FFmpeg">FFmpeg Path: <input type="text" id="s-ffmpeg" value="${esc(cfg.ffmpeg?.path || 'ffmpeg')}"></label>
-      <label title="عدد خيوط المعالجة">Threads: <input type="number" id="s-threads" value="${cfg.ffmpeg?.threads || 2}"></label>
-      <label title="User Agent المستخدم في طلبات FFmpeg">User Agent: <input type="text" id="s-ua" value="${esc(cfg.ffmpeg?.userAgent || '')}"></label>
-    `;
-  }
-
-  const viewerEl = document.getElementById('viewer-settings');
-  if (viewerEl) {
-    viewerEl.innerHTML = `
-      <label title="السماح للمشاهد بنسخ رابط البث"><input type="checkbox" id="s-copy" ${cfg.admin?.allowCopyUrl !== false ? 'checked' : ''}> السماح بنسخ الرابط</label>
-      <label title="السماح بفتح البث في VLC"><input type="checkbox" id="s-vlc" ${cfg.admin?.allowVlc !== false ? 'checked' : ''}> السماح بـ VLC</label>
-      <label title="السماح بمشغلات خارجية"><input type="checkbox" id="s-ext" ${cfg.admin?.allowExternalPlayers !== false ? 'checked' : ''}> السماح بمشغلات خارجية</label>
-      <label title="السماح بـ Picture in Picture"><input type="checkbox" id="s-pip" ${cfg.admin?.allowPiP !== false ? 'checked' : ''}> السماح بـ PiP</label>
-    `;
-  }
+  document.getElementById('set-stream').innerHTML = `
+    ${s('stream.hlsRoot', cfg.stream?.hlsRoot)}
+    ${s('stream.idleStopSeconds', cfg.stream?.idleStopSeconds)}
+  `;
+  document.getElementById('set-cache').innerHTML = `
+    ${s('cache.ramBufferSizeMb', cfg.cache?.ramBufferSizeMb)}
+    ${s('cache.diskCacheSizeMb', cfg.cache?.diskCacheSizeMb)}
+  `;
+  document.getElementById('set-ffmpeg').innerHTML = `
+    ${s('ffmpeg.path', cfg.ffmpeg?.path)}
+    ${s('ffmpeg.hlsTime', cfg.ffmpeg?.hlsTime)}
+    ${s('ffmpeg.threads', cfg.ffmpeg?.threads)}
+  `;
+  document.getElementById('set-server').innerHTML = `
+    ${s('server.port', cfg.server?.port)}
+    ${s('server.host', cfg.server?.host)}
+  `;
 }
 
 async function saveSettings() {
-  const result = await api('PUT', '/config', {
-    ffmpeg: {
-      path: document.getElementById('s-ffmpeg')?.value || 'ffmpeg',
-      hlsTime: parseInt(document.getElementById('s-hls-time')?.value) || 2,
-      hlsListSize: parseInt(document.getElementById('s-hls-list')?.value) || 10,
-      threads: parseInt(document.getElementById('s-threads')?.value) || 2,
-      userAgent: document.getElementById('s-ua')?.value || ''
-    },
-    stream: {
-      idleStopSeconds: parseInt(document.getElementById('s-idle')?.value) || 30,
-      autoRestartCrashed: document.getElementById('s-auto-restart')?.checked !== false
-    },
-    cache: {
-      ramBufferSizeMb: parseInt(document.getElementById('s-ram')?.value) || 256,
-      diskCacheSizeMb: parseInt(document.getElementById('s-disk')?.value) || 5120
-    },
-    admin: {
-      allowCopyUrl: document.getElementById('s-copy')?.checked !== false,
-      allowVlc: document.getElementById('s-vlc')?.checked !== false,
-      allowExternalPlayers: document.getElementById('s-ext')?.checked !== false,
-      allowPiP: document.getElementById('s-pip')?.checked !== false
-    }
+  const updates = {};
+  document.querySelectorAll('[id^="st-"]').forEach(el => {
+    const key = el.id.slice(3);
+    updates[key] = el.value;
   });
-  if (result) showToast('تم حفظ الإعدادات', 'success');
-  else showToast('فشل حفظ الإعدادات', 'error');
+  const res = await api('/admin/config', { method: 'PUT', body: updates });
+  if (res) alert('✅ تم حفظ الإعدادات');
 }
 
-// ─── Logs ────────────────────────────────────────────────
-async function loadLogs() {
-  const level = document.getElementById('log-level')?.value || '';
-  const d = await api('GET', '/logs' + (level ? '?level=' + level : ''));
-  const logs = d?.logs || [];
-  const container = document.getElementById('logs-container');
-  if (!container) return;
+// ═══ HELPERS ═══
+function esc(s) { return String(s||'').replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>').replace(/"/g,'"'); }
 
-  container.innerHTML = logs.map(log =>
-    `<div class="log-entry log-${log.level || 'info'}">
-      <span class="log-time">[${new Date(log.timestamp).toLocaleString('ar-SA')}]</span>
-      <span class="log-level">${(log.level || 'INFO').toUpperCase()}</span>
-      <span class="log-msg">${esc(log.message || '')}</span>
-    </div>`
-  ).join('') || '<div class="empty-row">لا توجد سجلات</div>';
+function formatUptime(sec) {
+  if (!sec || sec < 0) return '0s';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  if (h) return h+'h '+m+'m';
+  if (m) return m+'m '+s+'s';
+  return s+'s';
 }
 
-function filterLogs() { loadLogs(); }
-
-async function clearLogs() {
-  await api('DELETE', '/logs');
-  loadLogs();
+function fmtBytes(b) {
+  if (!b) return '0 B';
+  const u = ['B','KB','MB','GB'];
+  let i = 0;
+  while (b >= 1024 && i < u.length-1) { b /= 1024; i++; }
+  return (i > 0 ? b.toFixed(1) : Math.floor(b)) + ' ' + u[i];
 }
 
-// ─── Modal ───────────────────────────────────────────────
-function showModal(title, body) {
-  const titleEl = document.getElementById('modal-title');
-  const bodyEl = document.getElementById('modal-body');
-  const overlay = document.getElementById('modal-overlay');
-  const modal = document.getElementById('modal');
-  if (!titleEl || !bodyEl || !overlay || !modal) return;
-  titleEl.textContent = title;
-  bodyEl.innerHTML = body;
-  overlay.classList.add('show');
-  modal.classList.add('show');
+function fmtBandwidth(bps) {
+  if (!bps) return '—';
+  if (bps >= 1000000) return (bps/1000000).toFixed(1) + ' Mbps';
+  if (bps >= 1000) return (bps/1000).toFixed(0) + ' Kbps';
+  return bps + ' bps';
+}
+
+function showBadge(id, count) {
+  const el = document.getElementById('badge-' + id);
+  if (el) { el.textContent = count; el.classList.add('show'); }
+}
+function hideBadge(id) {
+  const el = document.getElementById('badge-' + id);
+  if (el) el.classList.remove('show');
+}
+
+function openModal() {
+  document.getElementById('modal-overlay').style.display = 'flex';
+  document.getElementById('modal').style.display = 'flex';
 }
 
 function closeModal() {
-  document.getElementById('modal-overlay')?.classList.remove('show');
-  document.getElementById('modal')?.classList.remove('show');
+  document.getElementById('modal-overlay').style.display = 'none';
+  document.getElementById('modal').style.display = 'none';
 }
 
-// ─── Toast notifications ─────────────────────────────────
-function showToast(msg, type = 'info') {
-  let container = document.getElementById('toast-container');
-  if (!container) {
-    container = document.createElement('div');
-    container.id = 'toast-container';
-    container.style.cssText = 'position:fixed;bottom:20px;left:20px;z-index:9999;display:flex;flex-direction:column;gap:8px';
-    document.body.appendChild(container);
-  }
-
-  const toast = document.createElement('div');
-  const colors = { success: '#10b981', error: '#ef4444', warn: '#f59e0b', info: '#3b82f6' };
-  toast.style.cssText = `background:${colors[type] || colors.info};color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,0.3);opacity:0;transition:opacity 0.3s`;
-  toast.textContent = msg;
-  container.appendChild(toast);
-
-  setTimeout(() => { toast.style.opacity = '1'; }, 10);
-  setTimeout(() => {
-    toast.style.opacity = '0';
-    setTimeout(() => toast.remove(), 300);
-  }, 3500);
-}
-
-// ─── Init ────────────────────────────────────────────────
-async function init() {
-  const ok = await loadCredentials();
-  if (!ok) return;
-
-  initNav();
-  loadDashboard();
-  startDashboardAutoRefresh();
-}
-
-init();
+// ═══ AUTO REFRESH ═══
+setInterval(() => {
+  const active = document.querySelector('.page.active');
+  if (!active) return;
+  const id = active.id;
+  if (id === 'page-overview') loadOverview();
+  else if (id === 'page-streams') loadStreams();
+  else if (id === 'page-viewers') loadViewers();
+}, 5000);
