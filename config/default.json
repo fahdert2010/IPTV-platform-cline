@@ -8,45 +8,70 @@
     "path": "ffmpeg",
     "ffprobePath": "ffprobe",
     "hlsTime": 2,
-    "hlsListSize": 6,
+    "hlsListSize": 10,
     "hlsDeleteThreshold": 4,
     "gopSeconds": 2,
     "threads": 2,
-    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "reconnectDelayMs": 3000,
+    "maxReconnectAttempts": 10,
+    "dnsRefreshMs": 60000
   },
   "stream": {
     "hlsRoot": "hls",
-    "idleStopSeconds": 60,
+    "idleStopSeconds": 30,
     "maxRestarts": 20,
     "restartBackoffMs": 5000,
-    "startupQueueDelayMs": 8000,
+    "startupQueueDelayMs": 2000,
     "startupConcurrency": 1,
     "autoRestartCrashed": true,
     "sourceFailStopSeconds": 180,
-    "blockedStopSeconds": 300
+    "blockedStopSeconds": 300,
+    "startupBufferSeconds": 4,
+    "lowLatencyMode": false,
+    "preloadSegments": 3,
+    "readAhead": 2,
+    "writeAhead": 2,
+    "concurrentReaders": 10,
+    "concurrentWriters": 2
   },
   "cache": {
     "maxDiskUsageMb": 10240,
-    "autoCleanupIntervalMinutes": 60,
-    "deleteOldSegmentsAfterMinutes": 1440,
-    "maxSegmentsPerChannel": 100
+    "autoCleanupIntervalMinutes": 15,
+    "deleteOldSegmentsAfterMinutes": 5,
+    "maxSegmentsPerChannel": 50,
+    "ramBufferSizeMb": 256,
+    "diskCacheSizeMb": 5120,
+    "retentionTimeMinutes": 10,
+    "bufferSeconds": 6,
+    "maxCachedSegments": 100
   },
   "heartbeat": {
-    "intervalMs": 15000,
-    "viewerTimeoutSeconds": 60
+    "intervalMs": 10000,
+    "viewerTimeoutSeconds": 30
   },
   "log": {
     "level": "info",
-    "maxFiles": 10,
+    "maxFiles": 20,
     "maxSizeMb": 10,
     "console": true,
     "file": true,
-    "memory": false
+    "memory": true,
+    "memoryLines": 5000
   },
   "admin": {
     "username": "admin",
     "password": "admin123",
-    "sessionTimeoutMinutes": 60
+    "sessionTimeoutMinutes": 60,
+    "allowCopyUrl": true,
+    "allowExternalPlayers": true,
+    "allowVlc": true,
+    "allowDownload": false,
+    "allowScreenshot": false,
+    "allowPiP": true,
+    "allowFullscreen": true,
+    "allowDevTools": false,
+    "allowCast": true
   },
   "sources": {
     "importConcurrency": 3,
@@ -54,8 +79,21 @@
     "maxChannelsPerSource": 10000
   },
   "health": {
-    "checkIntervalMinutes": 5,
+    "checkIntervalMinutes": 1,
     "timeoutMs": 15000,
-    "concurrentChecks": 5
+    "concurrentChecks": 5,
+    "latencyThresholdMs": 500,
+    "packetLossThreshold": 5,
+    "segmentDelayThresholdMs": 3000,
+    "bitrateStabilityThreshold": 20
+  },
+  "viewer": {
+    "maxViewersPerChannel": 10000,
+    "bandwidthSampleIntervalMs": 5000,
+    "geoIpEnabled": false
+  },
+  "stats": {
+    "historyMinutes": 60,
+    "sampleIntervalMs": 10000
   }
 }

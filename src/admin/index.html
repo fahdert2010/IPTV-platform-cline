@@ -2,192 +2,197 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mubasher Core — لوحة التحكم</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mubasher Core v2.0 — Operations Center</title>
 <link rel="stylesheet" href="admin.css">
 </head>
 <body>
-<div class="admin-layout">
-  <aside class="sidebar">
-    <div class="sidebar-brand">
-      <h2>Mubasher Core</h2>
-      <span class="sidebar-version">v1.0.0</span>
-    </div>
-    <nav class="sidebar-nav">
-      <a href="#" class="nav-item active" data-section="dashboard"><span class="nav-icon">📊</span><span class="nav-label">لوحة المراقبة</span></a>
-      <a href="#" class="nav-item" data-section="sources"><span class="nav-icon">📡</span><span class="nav-label">المصادر</span></a>
-      <a href="#" class="nav-item" data-section="channels"><span class="nav-icon">📺</span><span class="nav-label">القنوات</span></a>
-      <a href="#" class="nav-item" data-section="streams"><span class="nav-icon">🔴</span><span class="nav-label">البث المباشر</span></a>
-      <a href="#" class="nav-item" data-section="health"><span class="nav-icon">🩺</span><span class="nav-label">الفحص الصحي</span></a>
-      <a href="#" class="nav-item" data-section="config"><span class="nav-icon">⚙️</span><span class="nav-label">الإعدادات</span></a>
-      <a href="#" class="nav-item" data-section="logs"><span class="nav-icon">📋</span><span class="nav-label">السجلات</span></a>
+
+<!-- Login -->
+<div id="login-overlay" class="overlay" style="display:flex">
+  <div class="card login-card">
+    <div class="login-logo">📺 Mubasher Core</div>
+    <h2>Operations Center</h2>
+    <form id="login-form" style="display:flex;flex-direction:column;gap:12px">
+      <input type="text" id="login-user" placeholder="اسم المستخدم" required>
+      <input type="password" id="login-pass" placeholder="كلمة المرور" required>
+      <div id="login-error" class="error-text"></div>
+      <button type="submit" class="btn-primary">دخول</button>
+    </form>
+  </div>
+</div>
+
+<div id="app" style="display:none">
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div class="logo"><h1>Mubasher</h1><span class="v">v2.0</span></div>
+    <nav>
+      <a class="active" data-page="overview"><span>📊</span><span>نظرة عامة</span><span class="badge" id="badge-overview"></span></a>
+      <a data-page="channels"><span>📺</span><span>القنوات</span><span class="badge" id="badge-channels"></span></a>
+      <a data-page="sources"><span>📡</span><span>المصادر</span><span class="badge" id="badge-sources"></span></a>
+      <a data-page="streams"><span>▶️</span><span>البث</span><span class="badge" id="badge-streams"></span></a>
+      <a data-page="ffmpeg"><span>🎬</span><span>FFmpeg</span><span class="badge" id="badge-ffmpeg"></span></a>
+      <a data-page="viewers"><span>👁️</span><span>المشاهدون</span><span class="badge" id="badge-viewers"></span></a>
+      <a data-page="hls"><span>📦</span><span>HLS</span></a>
+      <a data-page="health"><span>❤️</span><span>الصحة</span><span class="badge" id="badge-health"></span></a>
+      <a data-page="diagnostics"><span>🔍</span><span>التشخيص</span><span class="badge" id="badge-diag"></span></a>
+      <a data-page="logs"><span>📋</span><span>السجلات</span></a>
+      <a data-page="settings"><span>⚙️</span><span>الإعدادات</span></a>
     </nav>
     <div class="sidebar-footer">
-      <a href="/viewer" class="nav-item"><span class="nav-icon">👁</span><span class="nav-label">العودة للمشاهدة</span></a>
+      <div class="sys-info"><span id="sys-cpu">CPU —</span><span id="sys-ram">RAM —</span></div>
+      <a href="/viewer" target="_blank" class="viewer-link">🔗 المشاهدة</a>
     </div>
   </aside>
 
-  <div class="main-area">
-    <header class="topbar">
-      <div class="topbar-title"><h1 id="pageTitle">لوحة المراقبة</h1></div>
-      <div class="topbar-info">
-        <span class="topbar-status" id="serverStatus">● متصل</span>
-        <span class="topbar-time" id="serverTime"></span>
+  <!-- Main -->
+  <main id="main">
+    <header>
+      <div class="h-left"><h2 id="page-title">نظرة عامة</h2></div>
+      <div class="h-right">
+        <span class="dot" id="status-dot"></span><span id="status-text">متصل</span>
+        <span class="sep">|</span><span id="uptime-display">0s</span>
+        <span class="sep">|</span><span id="header-viewers">0 مشاهد</span>
+        <span class="sep">|</span><span class="time" id="header-time"></span>
       </div>
     </header>
 
-    <main class="content" id="mainContent">
+    <div id="content">
 
-      <!-- Dashboard -->
-      <section id="section-dashboard" class="section active">
-        <div class="stats-grid">
-          <div class="stat-card"><div class="stat-icon">📺</div><div class="stat-value" id="statChannels">0</div><div class="stat-label">إجمالي القنوات</div></div>
-          <div class="stat-card"><div class="stat-icon">✅</div><div class="stat-value" id="statEnabled">0</div><div class="stat-label">القنوات المفعلة</div></div>
-          <div class="stat-card"><div class="stat-icon">📡</div><div class="stat-value" id="statSources">0</div><div class="stat-label">المصادر</div></div>
-          <div class="stat-card"><div class="stat-icon">🔴</div><div class="stat-value" id="statStreams">0</div><div class="stat-label">البث النشط</div></div>
-          <div class="stat-card"><div class="stat-icon">👥</div><div class="stat-value" id="statViewers">0</div><div class="stat-label">المشاهدون</div></div>
-          <div class="stat-card"><div class="stat-icon">⏱</div><div class="stat-value" id="statUptime">0s</div><div class="stat-label">مدة التشغيل</div></div>
+      <!-- ═══ OVERVIEW ═══ -->
+      <div class="page active" id="page-overview">
+        <div class="stats-row" id="overview-stats"></div>
+        <div class="grid-2">
+          <div class="card"><h3>حالة البث <span class="live-dot"></span></h3><div class="card-body" id="ov-streams"><div class="load">...</div></div></div>
+          <div class="card"><h3>صحة القنوات</h3><div class="card-body" id="ov-health"><div class="load">...</div></div></div>
         </div>
-      </section>
+        <div class="grid-3">
+          <div class="card"><h3>المشاهدون</h3><div class="card-body" id="ov-viewers"><div class="load">...</div></div></div>
+          <div class="card"><h3>المصادر</h3><div class="card-body" id="ov-sources"><div class="load">...</div></div></div>
+          <div class="card"><h3>الكاش</h3><div class="card-body" id="ov-cache"><div class="load">...</div></div></div>
+        </div>
+        <div class="card"><h3>آخر الأحداث</h3><div class="card-body" id="ov-logs"><div class="load">...</div></div></div>
+      </div>
 
-      <!-- Sources -->
-      <section id="section-sources" class="section">
-        <div class="section-header">
-          <h2>إدارة المصادر</h2>
-          <div class="section-actions">
-            <button class="btn btn-primary" id="addSourceBtn">+ إضافة مصدر</button>
-          <button class="btn btn-accent" id="importM3UBtn">📥 استيراد رابط M3U</button>
-          <button class="btn btn-accent" id="importLocalFileBtn">📂 رفع ملف M3U</button>
-          <input type="file" id="fileInput" accept=".m3u,.m3u8,text/plain" style="display:none">
-          </div>
+      <!-- ═══ CHANNELS ═══ -->
+      <div class="page" id="page-channels">
+        <div class="toolbar">
+          <button class="btn" onclick="showAddChannel()">➕ إضافة</button>
+          <button class="btn" onclick="bulkAction('enable')">✅ تفعيل</button>
+          <button class="btn" onclick="bulkAction('disable')">❌ تعطيل</button>
+          <button class="btn" onclick="bulkAction('delete')">🗑️ حذف</button>
+          <button class="btn" onclick="loadChannels()">🔄</button>
+          <input type="text" id="ch-search" placeholder="🔍 بحث..." oninput="filterTable('ch')">
+          <select id="ch-filter-state" onchange="filterTable('ch')"><option value="">كل الحالات</option><option value="ONLINE">ONLINE</option><option value="ERROR">ERROR</option><option value="STOPPED">STOPPED</option></select>
         </div>
         <div class="table-wrap">
-          <table class="table">
-            <thead><tr><th>الاسم</th><th>النوع</th><th>الرابط</th><th>الحالة</th><th>القنوات</th><th>آخر تحديث</th><th>الإجراءات</th></tr></thead>
-            <tbody id="sourcesTableBody"><tr><td colspan="7" class="empty-row">لا توجد مصادر</td></tr></tbody>
-          </table>
+          <table><thead><tr>
+            <th><input type="checkbox" id="ch-select-all" onchange="toggleAll('ch')"></th>
+            <th>#</th><th>الاسم</th><th>المجموعة</th><th>الحالة</th><th>المشاهدون</th><th>الصحة</th><th>المصدر</th><th>مدة التشغيل</th><th>الإجراءات</th>
+          </tr></thead><tbody id="ch-tbody"></tbody></table>
         </div>
-      </section>
+      </div>
 
-      <!-- Channels -->
-      <section id="section-channels" class="section">
-        <div class="section-header">
-          <h2>إدارة القنوات</h2>
-          <div class="section-actions">
-            <input type="text" id="channelSearch" class="input search-input" placeholder="🔍 بحث في القنوات..." style="max-width:300px">
-          </div>
+      <!-- ═══ SOURCES ═══ -->
+      <div class="page" id="page-sources">
+        <div class="toolbar">
+          <button class="btn" onclick="showAddSource()">➕ إضافة</button>
+          <button class="btn" onclick="importAllSources()">📥 استيراد الكل</button>
+          <button class="btn" onclick="loadSources()">🔄</button>
         </div>
         <div class="table-wrap">
-          <table class="table">
-            <thead><tr><th>القناة</th><th>المجموعة</th><th>الرابط</th><th>الحالة</th><th>المشاهدون</th><th>الصحة</th><th>الإجراءات</th></tr></thead>
-            <tbody id="channelsTableBody"><tr><td colspan="7" class="empty-row">لا توجد قنوات</td></tr></tbody>
-          </table>
+          <table><thead><tr>
+            <th>الاسم</th><th>النوع</th><th>الحالة</th><th>القنوات</th><th>آخر مزامنة</th><th>الوضع</th><th>الأخطاء</th><th>الإجراءات</th>
+          </tr></thead><tbody id="src-tbody"></tbody></table>
         </div>
-      </section>
+      </div>
 
-      <!-- Streams -->
-      <section id="section-streams" class="section">
-        <div class="section-header"><h2>البث المباشر</h2><p class="section-desc">حالة عمليات FFmpeg النشطة</p></div>
+      <!-- ═══ STREAMS ═══ -->
+      <div class="page" id="page-streams">
+        <div class="toolbar">
+          <button class="btn" onclick="loadStreams()">🔄</button>
+          <input type="text" id="st-search" placeholder="🔍 بحث..." oninput="filterTable('st')">
+        </div>
         <div class="table-wrap">
-          <table class="table">
-            <thead><tr><th>القناة</th><th>الحالة</th><th>المشاهدون</th><th>مدة التشغيل</th><th>إجراء</th></tr></thead>
-            <tbody id="streamsTableBody"><tr><td colspan="5" class="empty-row">لا توجد بث نشط</td></tr></tbody>
-          </table>
+          <table><thead><tr>
+            <th>القناة</th><th>الحالة</th><th>المشاهدون</th><th>PID</th><th>CPU</th><th>RAM</th><th>وقت التشغيل</th><th>إعادة الاتصال</th><th>المصدر</th><th>الـ URL</th><th>الإجراءات</th>
+          </tr></thead><tbody id="st-tbody"></tbody></table>
         </div>
-      </section>
+      </div>
 
-      <!-- Health -->
-      <section id="section-health" class="section">
-        <div class="section-header"><h2>الفحص الصحي</h2><p class="section-desc">اختبار روابط البث باستخدام ffprobe</p></div>
-        <div class="health-form">
-          <input type="text" id="healthUrl" class="input" placeholder="أدخل رابط البث لاختباره..." dir="ltr">
-          <button class="btn btn-primary" id="healthTestBtn">اختبار</button>
+      <!-- ═══ FFMPEG ═══ -->
+      <div class="page" id="page-ffmpeg">
+        <div class="toolbar"><button class="btn" onclick="loadFFmpeg()">🔄</button></div>
+        <div id="ffmpeg-cards"></div>
+      </div>
+
+      <!-- ═══ VIEWERS ═══ -->
+      <div class="page" id="page-viewers">
+        <div class="toolbar">
+          <button class="btn" onclick="loadViewers()">🔄</button>
+          <input type="text" id="vw-search" placeholder="🔍 IP أو جهاز..." oninput="filterTable('vw')">
         </div>
-        <div id="healthResult" class="health-result hidden"></div>
-      </section>
-
-      <!-- Config -->
-      <section id="section-config" class="section">
-        <div class="section-header"><h2>الإعدادات</h2><p class="section-desc">إعدادات النظام الحالية</p></div>
-        <pre id="configDisplay" class="config-json"></pre>
-      </section>
-
-      <!-- Logs -->
-      <section id="section-logs" class="section">
-        <div class="section-header">
-          <h2>السجلات</h2>
-          <div class="section-actions">
-            <button class="btn btn-sm" id="refreshLogsBtn">🔄 تحديث</button>
-            <button class="btn btn-sm btn-danger" id="clearLogsBtn">🗑 مسح</button>
-          </div>
+        <div class="table-wrap">
+          <table><thead><tr>
+            <th>IP</th><th>الجهاز</th><th>المتصفح</th><th>القناة</th><th>وقت المشاهدة</th><th>السرعة</th><th>التأخير</th><th>آخر نبض</th><th>الإجراءات</th>
+          </tr></thead><tbody id="vw-tbody"></tbody></table>
         </div>
-        <div class="log-body" id="logBody"><div class="log-empty">لا توجد سجلات</div></div>
-      </section>
+      </div>
 
-    </main>
-    <footer class="admin-footer"><span>Mubasher Core v1.0.0</span></footer>
-  </div>
+      <!-- ═══ HLS ═══ -->
+      <div class="page" id="page-hls">
+        <div class="toolbar"><button class="btn" onclick="loadHls()">🔄</button></div>
+        <div id="hls-cards"></div>
+      </div>
+
+      <!-- ═══ HEALTH ═══ -->
+      <div class="page" id="page-health">
+        <div class="stats-row" id="health-stats-row"></div>
+        <div class="table-wrap">
+          <table><thead><tr>
+            <th>القناة</th><th>الدرجة</th><th>التأخير</th><th>سرعة البت</th><th>الدقة</th><th>الكوديك</th><th>مقاطع HLS</th><th>التسلسل</th><th>وقت التشغيل</th>
+          </tr></thead><tbody id="hl-tbody"></tbody></table>
+        </div>
+      </div>
+
+      <!-- ═══ DIAGNOSTICS ═══ -->
+      <div class="page" id="page-diagnostics">
+        <div class="stats-row" id="diag-stats"></div>
+        <div class="card"><h3>محرك التشخيص</h3><div class="card-body" id="diag-body"><p>اختر قناة لعرض التشخيص</p></div></div>
+      </div>
+
+      <!-- ═══ LOGS ═══ -->
+      <div class="page" id="page-logs">
+        <div class="toolbar">
+          <button class="btn" onclick="loadLogs()">🔄</button>
+          <select id="log-level" onchange="loadLogs()">
+            <option value="">الكل</option><option value="info">معلومات</option><option value="warn">تحذير</option><option value="error">خطأ</option><option value="critical">حرج</option>
+          </select>
+          <input type="text" id="log-search" placeholder="🔍 بحث..." oninput="loadLogs()">
+        </div>
+        <div class="logs-container" id="logs-container"></div>
+      </div>
+
+      <!-- ═══ SETTINGS ═══ -->
+      <div class="page" id="page-settings">
+        <div class="grid-2">
+          <div class="card"><h3>البث</h3><div class="card-body" id="set-stream"></div></div>
+          <div class="card"><h3>الكاش</h3><div class="card-body" id="set-cache"></div></div>
+          <div class="card"><h3>FFmpeg</h3><div class="card-body" id="set-ffmpeg"></div></div>
+          <div class="card"><h3>الخادم</h3><div class="card-body" id="set-server"></div></div>
+        </div>
+        <button class="btn-primary" onclick="saveSettings()">💾 حفظ</button>
+      </div>
+
+    </div><!-- /content -->
+  </main>
 </div>
 
-<!-- Add Source Modal -->
-<div class="modal-overlay hidden" id="sourceModal">
-  <div class="modal">
-    <div class="modal-header"><h3>إضافة مصدر جديد</h3><button class="modal-close" id="sourceModalClose">✕</button></div>
-    <form id="sourceForm">
-      <div class="form-group"><label>اسم المصدر</label><input type="text" id="sourceName" class="input" required placeholder="مثال: قنوات عربية"></div>
-      <div class="form-group"><label>نوع المصدر</label>
-        <select id="sourceType" class="input">
-          <option value="m3u_url">رابط M3U</option>
-          <option value="m3u_file">ملف M3U</option>
-          <option value="single">قناة منفردة</option>
-        </select>
-      </div>
-      <div class="form-group"><label>الرابط أو المسار</label><input type="text" id="sourceUrl" class="input" required placeholder="https://example.com/playlist.m3u8" dir="ltr"></div>
-      <div class="form-actions"><button type="submit" class="btn btn-primary">إضافة</button><button type="button" class="btn" onclick="document.getElementById('sourceModal').classList.add('hidden')">إلغاء</button></div>
-    </form>
-  </div>
-</div>
-
-      <!-- Add / Edit Channel Modal -->
-<div class="modal-overlay hidden" id="channelModal">
-  <div class="modal">
-    <div class="modal-header"><h3 id="channelModalTitle">إضافة قناة جديدة</h3><button class="modal-close" id="channelModalClose">✕</button></div>
-    <form id="channelForm">
-      <div class="form-group"><label>اسم القناة</label><input type="text" id="channelName" class="input" required placeholder="مثال: قناة العربية"></div>
-      <div class="form-group"><label>المجموعة</label><input type="text" id="channelGroup" class="input" placeholder="مثال: أخبار"></div>
-      <div class="form-group"><label>رابط البث</label><input type="url" id="channelUrl" class="input" required placeholder="https://example.com/stream.m3u8" dir="ltr"></div>
-      <div class="form-group"><label>الرابط البديل (Backup URL)</label><input type="url" id="channelBackupUrl" class="input" placeholder="https://backup.example.com/stream.m3u8" dir="ltr"></div>
-      <div class="form-group"><label>رابط الشعار (Logo)</label><input type="url" id="channelLogo" class="input" placeholder="https://example.com/logo.png" dir="ltr"></div>
-      <div class="form-group"><label>معرف القناة (tvg-id)</label><input type="text" id="channelTvgId" class="input" placeholder="اختياري"></div>
-      <div class="form-group" style="display:flex;align-items:center;gap:8px">
-        <input type="checkbox" id="channelEnabled" checked>
-        <label for="channelEnabled">مفعلة</label>
-      </div>
-      <input type="hidden" id="channelEditId" value="">
-      <div class="form-actions">
-        <button type="submit" class="btn btn-primary" id="channelSubmitBtn">إضافة قناة</button>
-        <button type="button" class="btn" onclick="closeChannelModal()">إلغاء</button>
-      </div>
-    </form>
-  </div>
-</div>
-
-<!-- Import M3U Modal -->
-<div class="modal-overlay hidden" id="importModal">
-  <div class="modal">
-    <div class="modal-header"><h3>استيراد قائمة M3U</h3><button class="modal-close" id="importModalClose">✕</button></div>
-    <form id="importForm">
-      <div class="form-group"><label>اسم المصدر (اختياري)</label><input type="text" id="importName" class="input" placeholder="مثال: قنوات رياضية"></div>
-      <div class="form-group"><label>نوع الاستيراد</label>
-        <select id="importType" class="input">
-          <option value="m3u_url">رابط M3U</option>
-          <option value="m3u_file">ملف M3U محلي</option>
-        </select>
-      </div>
-      <div class="form-group"><label>رابط القائمة</label><input type="text" id="importUrl" class="input" required placeholder="https://example.com/playlist.m3u8" dir="ltr"></div>
-      <div class="form-actions"><button type="submit" class="btn btn-primary" id="importSubmitBtn">استيراد</button><button type="button" class="btn" onclick="document.getElementById('importModal').classList.add('hidden')">إلغاء</button></div>
-    </form>
-  </div>
+<!-- Modal -->
+<div id="modal-overlay" class="overlay" onclick="closeModal()" style="display:none"></div>
+<div id="modal" class="modal" style="display:none">
+  <div class="modal-header"><h3 id="modal-title">العنوان</h3><button onclick="closeModal()" class="modal-close">✕</button></div>
+  <div class="modal-body" id="modal-body"></div>
 </div>
 
 <script src="admin.js"></script>

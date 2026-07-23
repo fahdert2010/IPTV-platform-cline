@@ -88,9 +88,17 @@ function write(level, message, meta) {
 
   // Memory buffer
   if (cfg.log.memory) {
-    memoryBuffer.push(line);
-    if (memoryBuffer.length > 1000) memoryBuffer.shift();
+    memoryBuffer.push({ level: LEVEL_NAMES[level]?.toLowerCase() || 'info', message, meta, timestamp: new Date().toISOString() });
+    const maxLines = cfg.log.memoryLines || 5000;
+    if (memoryBuffer.length > maxLines) memoryBuffer.shift();
   }
+}
+
+/**
+ * Helper to format a separator line.
+ */
+function separator(title) {
+  return `\n${'─'.repeat(20)} ${title} ${'─'.repeat(20)}`;
 }
 
 const logger = {
@@ -98,6 +106,114 @@ const logger = {
   warn: (msg, meta) => write(1, msg, meta),
   info: (msg, meta) => write(2, msg, meta),
   debug: (msg, meta) => write(3, msg, meta),
+
+  // ════════════════════════════════════════════════════════════
+  // HLS LIFECYCLE LOGGING
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Log stream start event.
+   */
+  logStreamStart: (channelId, outputDir, ffmpegPid, outputPath) => {
+    logger.info(
+      `\n${separator('STREAM START')}\n` +
+      `Channel ID: ${channelId}\n` +
+      `Output Directory: ${outputDir}\n` +
+      `FFmpeg PID: ${ffmpegPid}\n` +
+      `Output Path: ${outputPath}`
+    );
+  },
+
+  /**
+   * Log playlist creation event.
+   */
+  logPlaylistCreated: (channelId, m3u8Path, mtime, size) => {
+    logger.info(
+      `\n${separator('PLAYLIST CREATED')}\n` +
+      `Channel ID: ${channelId}\n` +
+      `index.m3u8 exists: ${fs.existsSync(m3u8Path)}\n` +
+      `mtime: ${mtime}\n` +
+      `size: ${size} bytes`
+    );
+  },
+
+  /**
+   * Log playlist update event.
+   */
+  logPlaylistUpdated: (channelId, sequence, segmentCount) => {
+    logger.info(
+      `\n${separator('PLAYLIST UPDATED')}\n` +
+      `Channel ID: ${channelId}\n` +
+      `sequence: ${sequence}\n` +
+      `segment count: ${segmentCount}`
+    );
+  },
+
+  /**
+   * Log client HTTP request for HLS file.
+   */
+  logClientRequest: (method, url, filePath, exists, absolutePath) => {
+    logger.info(
+      `\n${separator('CLIENT REQUEST')}\n` +
+      `METHOD: ${method}\n` +
+      `URL: ${url}\n` +
+      `GET ${filePath}\n` +
+      `exists? ${exists}\n` +
+      `absolute path: ${absolutePath}`
+    );
+  },
+
+  /**
+   * Log FFmpeg exit event.
+   */
+  logFfmpegExit: (channelId, exitCode, signal, reason) => {
+    logger.info(
+      `\n${separator('FFMPEG EXIT')}\n` +
+      `Channel ID: ${channelId}\n` +
+      `exit code: ${exitCode}\n` +
+      `signal: ${signal}\n` +
+      `reason: ${reason}`
+    );
+  },
+
+  /**
+   * Log stream stop event.
+   */
+  logStreamStop: (channelId, reason) => {
+    logger.info(
+      `\n${separator('STREAM STOP')}\n` +
+      `Channel ID: ${channelId}\n` +
+      `reason: ${reason}`
+    );
+  },
+
+  /**
+   * Log directory delete event with stack trace.
+   */
+  logDirectoryDelete: (channelId, deletedPath, caller) => {
+    // Capture stack trace
+    const stack = new Error().stack;
+    logger.info(
+      `\n${separator('DIRECTORY DELETE')}\n` +
+      `Channel ID: ${channelId}\n` +
+      `who called delete: ${caller}\n` +
+      `stack trace:\n${stack}\n` +
+      `deleted path: ${deletedPath}`
+    );
+  },
+
+  /**
+   * Log playlist missing at request time.
+   */
+  logPlaylistMissing: (channelId, absolutePath, exists, cwd) => {
+    logger.info(
+      `\n${separator('PLAYLIST MISSING')}\n` +
+      `Channel ID: ${channelId}\n` +
+      `absolute path searched: ${absolutePath}\n` +
+      `exists? ${exists}\n` +
+      `cwd: ${cwd}`
+    );
+  },
 
   /**
    * Return recent log lines from memory buffer.

@@ -2,13 +2,13 @@
 
 const config = require('../config');
 const logger = require('../logger');
-const ffmpegManager = require('../ffmpeg');
+const runtime = require('../runtime');
+const streamEngine = require('../stream-engine');
 
 /**
- * Heartbeat Module — Tracks active viewers per channel.
- * Each viewer sends heartbeat every 15s. If heartbeat stops,
- * viewer is removed after timeout. FFmpegManager is notified
- * when viewers join/leave to manage idle timeout.
+ * Heartbeat Module v2.0 — Tracks active viewers via RuntimeRegistry.
+ * All state writes go through RuntimeRegistry (single source of truth).
+ * Stream idle timeout is managed by stream-engine.
  */
 class HeartbeatManager {
   constructor() {
@@ -54,16 +54,23 @@ class HeartbeatManager {
     if (existing) {
       // Viewer switched channel
       if (existing.channelId !== channelId) {
-        ffmpegManager.removeViewer(existing.channelId);
-        ffmpegManager.addViewer(channelId, '');
+        streamEngine.removeViewer(existing.channelId, clientId);
+        streamEngine.addViewer(channelId, null, clientId);
         existing.channelId = channelId;
       }
       existing.lastBeat = Date.now();
     } else {
       // New viewer
       this.viewers.set(clientId, { clientId, channelId, lastBeat: Date.now() });
-      ffmpegManager.addViewer(channelId, '');
+      streamEngine.addViewer(channelId, null, clientId);
     }
+
+    // Update RuntimeRegistry viewer heartbeat
+    runtime.setViewer(clientId, {
+      currentChannel: channelId,
+      lastHeartbeat: Date.now(),
+      status: 'connected'
+    });
   }
 
   /**
@@ -72,7 +79,8 @@ class HeartbeatManager {
   remove(clientId) {
     const viewer = this.viewers.get(clientId);
     if (viewer) {
-      ffmpegManager.removeViewer(viewer.channelId);
+      streamEngine.removeViewer(viewer.channelId, clientId);
+      runtime.removeViewer(clientId);
       this.viewers.delete(clientId);
     }
   }
@@ -87,7 +95,8 @@ class HeartbeatManager {
 
     for (const [clientId, viewer] of this.viewers) {
       if (now - viewer.lastBeat > timeoutMs) {
-        ffmpegManager.removeViewer(viewer.channelId);
+        streamEngine.removeViewer(viewer.channelId, clientId);
+        runtime.removeViewer(clientId);
         this.viewers.delete(clientId);
       }
     }

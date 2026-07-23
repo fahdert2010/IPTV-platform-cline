@@ -4,10 +4,13 @@ const express = require('express');
 const config = require('../config');
 const storage = require('../storage');
 const logger = require('../logger');
+const runtime = require('../runtime');
 const sources = require('../sources');
 const channels = require('../channels');
-const ffmpegManager = require('../ffmpeg');
-const heartbeat = require('../heartbeat');
+const streamEngine = require('../stream-engine');
+const viewerManager = require('../viewer-manager');
+const healthSystem = require('../health');
+const cache = require('../cache');
 
 const router = express.Router();
 
@@ -27,54 +30,71 @@ router.use((req, res, next) => {
   next();
 });
 
-// ── Dashboard ──
+// ── Dashboard (reads exclusively from RuntimeRegistry) ──
 
 router.get('/dashboard', (req, res) => {
-  const allChannels = channels.getAll();
-  const allSources = sources.getAll();
-  const activeStreams = ffmpegManager.getAllStatus();
-  const totalViewers = heartbeat.getTotalViewers();
-
-  res.json({
-    totalChannels: allChannels.length,
-    enabledChannels: allChannels.filter(c => c.enabled).length,
-    totalSources: allSources.length,
-    enabledSources: allSources.filter(s => s.enabled).length,
-    activeStreams: activeStreams.length,
-    totalViewers,
-    uptime: process.uptime(),
-    streams: activeStreams
-  });
+  try {
+    const dashboard = runtime.getDashboard();
+    res.json(dashboard);
+  } catch (err) {
+    logger.error('Admin dashboard error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // ── Channels ──
 
 router.get('/channels', (req, res) => {
-  const { search, group, source } = req.query;
-  let result = channels.getAll();
+  try {
+    const { search, group, source } = req.query;
+    let result = runtime.getChannels();
 
-  if (search) result = result.filter(c => 
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    c.group.toLowerCase().includes(search.toLowerCase())
-  );
-  if (group) result = result.filter(c => c.group === group);
-  if (source) result = result.filter(c => c.sourceId === source);
+    if (search) result = result.filter(c => 
+      c.name.toLowerCase().includes(search.toLowerCase()) ||
+      (c.group || '').toLowerCase().includes(search.toLowerCase())
+    );
+    if (group) result = result.filter(c => c.group === group);
+    if (source) result = result.filter(c => c.primarySource === source);
 
-  res.json({ channels: result, total: result.length });
+    res.json({ channels: result, total: result.length });
+  } catch (err) {
+    logger.error('Admin channels error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 router.get('/channels/groups', (req, res) => {
-  res.json({ groups: channels.getGroups() });
+  try {
+    res.json({ groups: channels.getGroups() });
+  } catch (err) {
+    logger.error('Admin groups error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 router.get('/channels/:id', (req, res) => {
-  const ch = channels.getById(req.params.id);
-  if (!ch) return res.status(404).json({ error: 'Channel not found' });
-  res.json({ channel: ch });
+  try {
+    const ch = runtime.getChannel(req.params.id);
+    if (!ch) return res.status(404).json({ error: 'Channel not found' });
+    res.json({ channel: ch });
+  } catch (err) {
+    logger.error('Admin channel detail error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 router.post('/channels', (req, res) => {
+  const { primarySource, primaryStreamId, url } = req.body;
+  // LAW-001: Every channel must have a source reference or direct URL
+  const hasSourceRef = primarySource && primaryStreamId;
+  const hasDirectUrl = url && url.trim().length > 0;
+  if (!hasSourceRef && !hasDirectUrl) {
+    return res.status(400).json({
+      error: 'Channel must have either primarySource+primaryStreamId or a direct url'
+    });
+  }
   const ch = channels.add(req.body);
+  healthSystem.recordEvent('channel_created');
   logger.info(`Admin: created channel "${ch.name}"`);
   res.status(201).json({ channel: ch });
 });
@@ -87,6 +107,9 @@ router.put('/channels/:id', (req, res) => {
 });
 
 router.delete('/channels/:id', (req, res) => {
+  // Stop stream first
+  streamEngine.stop(req.params.id);
+  cache.clearChannel(req.params.id);
   const deleted = channels.remove(req.params.id);
   if (!deleted) return res.status(404).json({ error: 'Channel not found' });
   logger.info(`Admin: deleted channel ${req.params.id}`);
@@ -96,9 +119,15 @@ router.delete('/channels/:id', (req, res) => {
 router.post('/channels/:id/test', async (req, res) => {
   const ch = channels.getById(req.params.id);
   if (!ch) return res.status(404).json({ error: 'Channel not found' });
-  const health = await ffmpegManager.probeStream(ch.url);
-  channels.update(ch.id, { health });
-  res.json({ channel: ch.name, ...health });
+  // Resolve URL via source binding, fallback to direct url
+  const streamUrl = channels.getStreamUrl(ch.id, sources);
+  const testUrl = streamUrl ? streamUrl.url : (ch.url || '');
+  if (!testUrl) {
+    return res.status(400).json({ error: 'Channel has no source binding or direct URL to test' });
+  }
+  const result = await healthSystem.testStream(testUrl);
+  channels.update(ch.id, { health: { isOnline: result.isOnline, ...result } });
+  res.json({ channel: ch.name, ...result });
 });
 
 router.post('/channels/:id/enable', (req, res) => {
@@ -110,7 +139,68 @@ router.post('/channels/:id/enable', (req, res) => {
 router.post('/channels/:id/disable', (req, res) => {
   const ch = channels.update(req.params.id, { enabled: false });
   if (!ch) return res.status(404).json({ error: 'Channel not found' });
+  // Stop stream for disabled channel
+  streamEngine.stop(req.params.id);
   res.json({ channel: ch });
+});
+
+// Bulk operations
+router.post('/channels/bulk/enable', (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids array required' });
+  let count = 0;
+  for (const id of ids) {
+    if (channels.update(id, { enabled: true })) count++;
+  }
+  res.json({ ok: true, count });
+});
+
+router.post('/channels/bulk/disable', (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids array required' });
+  let count = 0;
+  for (const id of ids) {
+    if (channels.update(id, { enabled: false })) {
+      streamEngine.stop(id);
+      count++;
+    }
+  }
+  res.json({ ok: true, count });
+});
+
+router.post('/channels/bulk/delete', (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids array required' });
+  let count = 0;
+  for (const id of ids) {
+    streamEngine.stop(id);
+    cache.clearChannel(id);
+    if (channels.remove(id)) count++;
+  }
+  res.json({ ok: true, count });
+});
+
+router.post('/channels/bulk/test', async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids array required' });
+  
+  const results = [];
+  for (const id of ids) {
+    const ch = channels.getById(id);
+    if (ch) {
+      // Resolve URL via source binding, fallback to direct url
+      const streamUrl = channels.getStreamUrl(ch.id, sources);
+      const testUrl = streamUrl ? streamUrl.url : (ch.url || '');
+      if (!testUrl) {
+        results.push({ id, name: ch.name, error: 'No source binding or direct URL' });
+        continue;
+      }
+      const health = await healthSystem.probeStream(testUrl);
+      channels.update(id, { health: { isOnline: health.isOnline, ...health } });
+      results.push({ id, name: ch.name, ...health });
+    }
+  }
+  res.json({ results, total: results.length });
 });
 
 // ── Sources ──
@@ -175,22 +265,39 @@ router.post('/sources/import-all', async (req, res) => {
   res.json(result);
 });
 
-// ── Streams ──
+// ── Streams (Stream Engine) ──
 
 router.get('/streams', (req, res) => {
-  res.json({ streams: ffmpegManager.getAllStatus() });
+  res.json({ streams: streamEngine.getAllStatus() });
 });
 
-router.post('/streams/:channelId/stop', (req, res) => {
-  ffmpegManager.stop(req.params.channelId);
-  res.json({ ok: true });
+router.get('/streams/:channelId', (req, res) => {
+  const status = streamEngine.getStatus(req.params.channelId);
+  if (!status) return res.status(404).json({ error: 'Stream not found' });
+  res.json({ stream: status });
 });
 
 router.post('/streams/:channelId/start', (req, res) => {
+  const ch = channels.getById(req.params.channelId);
+  if (!ch) return res.status(404).json({ error: 'Channel not found' });
   const { url } = req.body;
-  if (!url) return res.status(400).json({ error: 'URL required' });
-  ffmpegManager.addViewer(req.params.channelId, url);
-  res.json({ ok: true, channelId: req.params.channelId });
+  streamEngine.addViewer(req.params.channelId, ch, 'admin_' + Date.now());
+  res.json({ ok: true, channelId: req.params.channelId, state: streamEngine.getState(req.params.channelId) });
+});
+
+router.post('/streams/:channelId/stop', (req, res) => {
+  streamEngine.stop(req.params.channelId);
+  res.json({ ok: true });
+});
+
+router.post('/streams/:channelId/restart', (req, res) => {
+  const ch = channels.getById(req.params.channelId);
+  if (!ch) return res.status(404).json({ error: 'Channel not found' });
+  streamEngine.stop(req.params.channelId);
+  setTimeout(() => {
+    streamEngine.addViewer(req.params.channelId, ch, 'admin_restart_' + Date.now());
+  }, 1000);
+  res.json({ ok: true, message: 'Restarting stream' });
 });
 
 // ── Health ──
@@ -198,8 +305,63 @@ router.post('/streams/:channelId/start', (req, res) => {
 router.post('/health/test', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
-  const result = await ffmpegManager.probeStream(url);
+  const result = await healthSystem.testStream(url);
   res.json(result);
+});
+
+router.get('/health', (req, res) => {
+  res.json({ channels: healthSystem.getAllHealth() });
+});
+
+router.get('/health/:channelId', (req, res) => {
+  const health = healthSystem.getHealth(req.params.channelId);
+  if (!health) return res.status(404).json({ error: 'No health data for channel' });
+  res.json({ health });
+});
+
+// ── Viewers ──
+
+router.get('/viewers', (req, res) => {
+  const { channelId } = req.query;
+  if (channelId) {
+    const viewers = viewerManager.getViewersByChannel(channelId);
+    return res.json({ channelId, viewers, count: viewers.length });
+  }
+  res.json({
+    viewers: viewerManager.getAllViewers(),
+    stats: viewerManager.getStats(),
+    devices: viewerManager.getDeviceDistribution(),
+    browsers: viewerManager.getBrowserDistribution()
+  });
+});
+
+router.post('/viewers/:viewerId/kick', (req, res) => {
+  const { channelId } = req.body;
+  if (channelId) {
+    streamEngine.removeViewer(channelId, req.params.viewerId);
+  }
+  viewerManager.remove(req.params.viewerId);
+  res.json({ ok: true });
+});
+
+// ── Cache ──
+
+router.get('/cache', (req, res) => {
+  res.json(cache.getMetrics());
+});
+
+router.post('/cache/clear', (req, res) => {
+  const { channelId } = req.body;
+  if (channelId) {
+    cache.clearChannel(channelId);
+  } else {
+    // Clear everything
+    const allChannels = channels.getAll();
+    for (const ch of allChannels) {
+      cache.clearChannel(ch.id);
+    }
+  }
+  res.json({ ok: true, message: channelId ? `Cleared cache for ${channelId}` : 'Cleared all cache' });
 });
 
 // ── Config ──
@@ -216,11 +378,34 @@ router.put('/config', (req, res) => {
   res.json({ config: config.get() });
 });
 
+// ── System ──
+
+router.post('/system/restart-streams', (req, res) => {
+  streamEngine.stopAll();
+  res.json({ ok: true, message: 'All streams stopped' });
+});
+
+router.post('/system/gc', (req, res) => {
+  if (global.gc) {
+    global.gc();
+    res.json({ ok: true, message: 'Garbage collection triggered' });
+  } else {
+    res.json({ ok: false, message: 'GC not exposed (run with --expose-gc)' });
+  }
+});
+
 // ── Logs ──
 
 router.get('/logs', (req, res) => {
   const loggerModule = require('../logger');
-  res.json({ logs: loggerModule.getBuffer() });
+  const { level, search, limit } = req.query;
+  let logs = loggerModule.getBuffer() || [];
+  
+  if (level) logs = logs.filter(l => l.level === level);
+  if (search) logs = logs.filter(l => l.message.toLowerCase().includes(search.toLowerCase()));
+  if (limit) logs = logs.slice(0, parseInt(limit));
+  
+  res.json({ logs, total: logs.length });
 });
 
 router.delete('/logs', (req, res) => {
@@ -246,7 +431,8 @@ router.post('/restore/:collection', (req, res) => {
 
 // ── Import Local File ──
 
-const UPLOAD_DIR = require('path').join(process.cwd(), 'data', 'uploads');
+const filePath = require('path');
+const UPLOAD_DIR = filePath.join(process.cwd(), 'data', 'uploads');
 if (!require('fs').existsSync(UPLOAD_DIR)) require('fs').mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const fileUpload = require('multer')({ dest: UPLOAD_DIR, limits: { fileSize: 50 * 1024 * 1024 } });

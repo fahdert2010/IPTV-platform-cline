@@ -79,12 +79,23 @@ function hideWelcome() {
 
 async function loadChannels() {
   try {
-    const res = await fetch('/api/public/channels');
+    const url = '/api/public/channels';
+    console.log('VIEWER: Loading channels from', url);
+    const res = await fetch(url);
+    console.log('VIEWER: Response status:', res.status);
+    if (!res.ok) {
+      const text = await res.text();
+      console.error('VIEWER: Response body:', text);
+      showChannelError('خطأ في تحميل القنوات', 'الخادم أرجع رمز ' + res.status);
+      return;
+    }
     const data = await res.json();
+    console.log('VIEWER: Loaded channels:', data.total || (data.channels || []).length);
     CHANNELS = data.channels || [];
   } catch (e) {
-    console.error('Failed to load channels:', e);
-    showChannelError('تعذر تحميل القنوات', 'تأكد من أن الخادم يعمل وأنه تم استيراد قنوات.');
+    console.error('VIEWER: Failed to load channels:', e);
+    console.error('VIEWER: Error details:', e.message);
+    showChannelError('تعذر تحميل القنوات', 'تأكد من أن الخادم يعمل وأنه تم استيراد قنوات. الخطأ: ' + e.message);
     return;
   }
   renderCats();
@@ -348,6 +359,18 @@ function wireHlsEvents() {
   });
 }
 
+/**
+ * Build the LOCAL HLS URL for a channel.
+ * This is the URL that points to Express static files, NOT the original source.
+ */
+function buildHlsUrl(channelId) {
+  return window.location.protocol + '//' + window.location.hostname + ':' + (window.location.port || '3001') + '/hls/' + channelId + '/index.m3u8';
+}
+
+/**
+ * Load a channel into the HLS.js player.
+ * ALWAYS uses the LOCAL HLS cache URL, NEVER the original source URL.
+ */
 function loadIntoPlayer(ch) {
   const mode = ensurePlayer();
   if (!mode) {
@@ -373,10 +396,30 @@ function loadIntoPlayer(ch) {
   const activeCard = document.querySelector(`.card[data-id="${ch.id}"]`);
   if (activeCard) activeCard.classList.add('card-active');
 
-  if (mode === 'hls') {
-    hls.loadSource(ch.url + '?t=' + Date.now());
+  // ────── CRITICAL: Determine the URL to load ──────
+  // Priority: ch.hlsUrl (set by playChannel) > buildHlsUrl(ch.id) (fallback) > ch.url (NEVER use original)
+  let urlToLoad;
+  if (ch.hlsUrl) {
+    urlToLoad = ch.hlsUrl;
   } else {
-    video.src = ch.url;
+    // Fallback: build the HLS URL from the channel ID
+    urlToLoad = buildHlsUrl(ch.id);
+  }
+
+  // ────── LOG THE ACTUAL URL being loaded ──────
+  console.log('══════════ PLAYER URL TRACE ══════════');
+  console.log('PLAYER URL =', urlToLoad);
+  console.log('Channel name:', ch.name);
+  console.log('Channel ID:', ch.id);
+  console.log('Original source URL (NEVER used):', ch.url);
+  console.log('Is local HLS cache?', urlToLoad.includes('/hls/'));
+  console.log('══════════════════════════════════════');
+
+  if (mode === 'hls') {
+    hls.loadSource(urlToLoad + '?t=' + Date.now());
+  } else {
+    // Native HLS (Safari) - also use local URL
+    video.src = urlToLoad;
     video.play().catch(() => {});
   }
 }
@@ -401,8 +444,12 @@ function playChannel(id) {
   showMsg('جاري تحضير البث...');
 
   // Build the REAL HLS URL that viewer MUST use
-  const hlsUrl = window.location.protocol + '//' + window.location.hostname + ':' + (window.location.port || '3001') + '/hls/' + id + '/index.m3u8';
+  const hlsUrl = buildHlsUrl(id);
   console.log(`STEP 8: HLS URL that SHOULD be loaded: ${hlsUrl}`);
+
+  // ────── STORE hlsUrl PERMANENTLY on the channel object ──────
+  // This ensures ALL code paths (refresh, retry, play) use the local HLS URL
+  ch.hlsUrl = hlsUrl;
 
   // 1. Start FFmpeg via Public API (no auth needed)
   fetch('/api/public/stream-action/' + id + '/start', {
@@ -427,9 +474,8 @@ function playChannel(id) {
     setTimeout(() => {
       hideMsg();
       console.log(`STEP 7: Loading HLS URL into player: ${hlsUrl}`);
-      // Override ch.url to use the local HLS proxy ONLY
-      const hlsCh = { ...ch, url: hlsUrl };
-      loadIntoPlayer(hlsCh);
+      // ch.hlsUrl is already set, so loadIntoPlayer will use it
+      loadIntoPlayer(ch);
       console.log(`STEP 9: HLS.js should now load: ${hlsUrl}`);
       console.log(`STEP 9: HLS.js loading LOCAL file, NOT source URL: ${ch.url}`);
     }, 2000);
@@ -506,7 +552,7 @@ function setupControls() {
   $('#copyUrlBtn').onclick = () => {
     if (!currentChannel) return;
     // Copy the REAL HLS stream URL
-    const hlsUrl = window.location.protocol + '//' + window.location.hostname + ':' + (window.location.port || '3001') + '/hls/' + currentChannel.id + '/index.m3u8';
+    const hlsUrl = buildHlsUrl(currentChannel.id);
     navigator.clipboard.writeText(hlsUrl).then(() => {
       showMsg('✅ تم نسخ رابط HLS');
       setTimeout(hideMsg, 2000);
@@ -519,7 +565,7 @@ function setupControls() {
   $('#vlcBtn').onclick = () => {
     if (!currentChannel) return;
     // Open VLC with the REAL HLS stream URL
-    const hlsUrl = window.location.protocol + '//' + window.location.hostname + ':' + (window.location.port || '3001') + '/hls/' + currentChannel.id + '/index.m3u8';
+    const hlsUrl = buildHlsUrl(currentChannel.id);
     window.open('vlc://' + hlsUrl, '_blank');
     showMsg('✅ تم فتح الرابط في المشغل الخارجي');
     setTimeout(hideMsg, 2000);
@@ -530,6 +576,7 @@ function setupControls() {
     hideMsg();
     hideError();
     if (hls) { try { hls.destroy(); } catch (e) {} hls = null; }
+    // currentChannel.hlsUrl is already set from playChannel()
     loadIntoPlayer(currentChannel);
     heartbeat();
   };
@@ -547,6 +594,7 @@ function setupControls() {
     if (!currentChannel) return;
     hideError();
     if (hls) { try { hls.destroy(); } catch (e) {} hls = null; }
+    // currentChannel.hlsUrl is already set from playChannel()
     loadIntoPlayer(currentChannel);
   };
 }
