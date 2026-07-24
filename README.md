@@ -155,6 +155,22 @@ Viewer N ──┘
 
 ---
 
+## 📚 Documentation
+
+| Type | File | Description |
+|------|------|-------------|
+| Tutorial | [Getting Started](docs/getting-started.md) | Install to first stream |
+| How-to | [Add Channels](docs/how-to-add-channels.md) | Import from M3U, URLs, Xtream Codes |
+| How-to | [Monitor Streams](docs/how-to-monitor-streams.md) | Dashboard, health, viewer stats |
+| How-to | [Troubleshoot](docs/how-to-troubleshoot.md) | Common issues and fixes |
+| Reference | [API Reference](docs/api-reference.md) | Complete endpoint listing |
+| Reference | [Configuration](docs/configuration.md) | All config options with defaults |
+| Explanation | [Architecture](docs/architecture.md) | How the system fits together |
+| Explanation | [HLS Proxy](docs/hls-proxy.md) | Segment proxying and reference counting |
+| Explanation | [Stream Engine States](docs/stream-engine-states.md) | FFmpeg state machine lifecycle |
+
+---
+
 ## 📄 License / الترخيص
 
 MIT
