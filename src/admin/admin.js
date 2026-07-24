@@ -351,6 +351,38 @@ async function importAllSources() {
   if (r) { loadSources(); loadChannels(); }
 }
 
+// ═══ M3U UPLOAD ═══
+async function uploadM3U() {
+  const fileInput = document.getElementById('m3u-file-input');
+  const file = fileInput.files[0];
+  if (!file) return alert('الرجاء اختيار ملف M3U');
+  
+  const formData = new FormData();
+  formData.append('file', file);
+  const name = document.getElementById('m3u-file-name').value || file.name.replace(/\.(m3u|m3u8)$/i, '');
+  if (name) formData.append('name', name);
+  
+  document.getElementById('upload-status').textContent = 'جاري الرفع والاستيراد...';
+  try {
+    const res = await fetch('/api/admin/sources/upload', {
+      method: 'POST',
+      headers: { 'Authorization': 'Basic ' + btoa(document.getElementById('login-user').value + ':' + document.getElementById('login-pass').value) },
+      body: formData
+    });
+    const data = await res.json();
+    if (data.success) {
+      document.getElementById('upload-status').innerHTML = `✅ تم الاستيراد: أضيف ${data.added || 0}، حدث ${data.updated || 0}`;
+      loadSources();
+      loadChannels();
+    } else {
+      document.getElementById('upload-status').textContent = '❌ فشل: ' + (data.error || 'خطأ غير معروف');
+    }
+  } catch (err) {
+    document.getElementById('upload-status').textContent = '❌ خطأ في الاتصال';
+  }
+  fileInput.value = '';
+}
+
 async function showAddSource() {
   document.getElementById('modal-title').textContent = '➕ إضافة مصدر';
   document.getElementById('modal-body').innerHTML = `

@@ -100,6 +100,15 @@
           <button class="btn" onclick="importAllSources()">📥 استيراد الكل</button>
           <button class="btn" onclick="loadSources()">🔄</button>
         </div>
+        <div class="card" style="margin-bottom:12px;padding:12px">
+          <h4 style="margin-bottom:8px">📤 رفع ملف M3U</h4>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <input type="text" id="m3u-file-name" placeholder="اسم المصدر (اختياري)" style="flex:1;min-width:120px">
+            <input type="file" id="m3u-file-input" accept=".m3u,.m3u8,.txt" style="flex:2;min-width:200px">
+            <button class="btn-primary" onclick="uploadM3U()">📤 رفع واستيراد</button>
+          </div>
+          <div id="upload-status" style="margin-top:8px;font-size:12px;color:var(--text2)"></div>
+        </div>
         <div class="table-wrap">
           <table><thead><tr>
             <th>الاسم</th><th>النوع</th><th>الحالة</th><th>القنوات</th><th>آخر مزامنة</th><th>الوضع</th><th>الأخطاء</th><th>الإجراءات</th>
